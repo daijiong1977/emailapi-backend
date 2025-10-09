@@ -104,3 +104,7 @@ Next steps:
      -d '{"to_email":"self@6ray.com","subject":"API Test","message":"Hello from Email API","from_name":"Email API"}'
 
 SUMMARY
+
+echo "==> Launching Gmail configuration"
+sudo -u "$APP_USER" bash "$APP_DIR/deploy/config-gmail.sh" || true
+echo "ℹ️  You can re-run later with: sudo -u $APP_USER bash $APP_DIR/deploy/config-gmail.sh"

@@ -157,6 +157,15 @@ sudo systemctl restart emailapi
   sudo bash /opt/emailapi/deploy/uninstall-emailapi.sh
   ```
 
+### Gmail configuration helper
+
+The installer will launch an interactive Gmail setup as the last step.
+You can run it any time later to update credentials and test the SMTP login:
+
+```bash
+sudo -u emailapi bash /opt/emailapi/deploy/config-gmail.sh
+```
+
 ### 1. Launch EC2 Instance
 - Choose Red Hat Enterprise Linux 10 AMI
 - Configure security groups (allow port 8002 for API, 22 for SSH)
