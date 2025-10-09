@@ -167,12 +167,51 @@ You can run it any time later to update credentials and test the SMTP login:
 sudo -u emailapi bash /opt/emailapi/deploy/config-gmail.sh
 ```
 
+### Admin Config Panel
+
+A simple password-protected web UI is available (default password `771008`). You can change it by setting `PANEL_PASSWORD` in `/opt/emailapi/.env`.
+
+- Open: `https://emailapi.6ray.com/admin/config`
+- Features: set Gmail, manage allow/block domains, create per-user keys, rotate admin token.
+
 ### API key configuration
 
 Set API_KEY in `/opt/emailapi/.env` and restart the service. All POST /send-email requests must include:
 
 ```
 X-API-Key: <your-api-key>
+```
+
+### Per-user API keys (optional, more secure)
+
+This service also supports per-user API keys stored in a local SQLite DB. Enable by keeping defaults:
+
+- API_KEYS_DB=/opt/emailapi/api_keys.db
+- ADMIN_TOKEN=<random>
+
+Create a user key (admin-only):
+
+```bash
+curl -X POST https://emailapi.6ray.com/admin/keys/create \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: $(grep ^ADMIN_TOKEN= /opt/emailapi/.env | cut -d= -f2)" \
+  -d '{"username":"ios-client-1"}'
+```
+
+The response returns a client key in the form `key_id.secret`. Give this full string to the iOS client. The client will use it as the X-API-Key header.
+
+List keys (admin-only):
+
+```bash
+curl -s https://emailapi.6ray.com/admin/keys \
+  -H "X-Admin-Token: $(grep ^ADMIN_TOKEN= /opt/emailapi/.env | cut -d= -f2)"
+```
+
+Revoke a key (admin-only):
+
+```bash
+curl -X POST https://emailapi.6ray.com/admin/keys/revoke/<key_id> \
+  -H "X-Admin-Token: $(grep ^ADMIN_TOKEN= /opt/emailapi/.env | cut -d= -f2)"
 ```
 
 ### 1. Launch EC2 Instance

@@ -69,6 +69,15 @@ GMAIL_USER=your_gmail@gmail.com
 GMAIL_APP_PASSWORD=your_16_char_app_password
 # API access
 API_KEY=replace_with_long_random_string
+# Per-user API keys DB and admin token
+API_KEYS_DB=/opt/emailapi/api_keys.db
+ADMIN_TOKEN=replace_with_admin_token
+# Recipient domain policy (comma-separated). Leave ALLOW_DOMAINS empty to allow all by default.
+ALLOW_DOMAINS=
+BLOCK_DOMAINS=
+# Admin panel settings
+PANEL_PASSWORD=771008
+ENV_FILE_PATH=/opt/emailapi/.env
 EOF
   sudo chown "$APP_USER":"$APP_USER" "$APP_DIR/.env"
   sudo chmod 600 "$APP_DIR/.env"
@@ -97,11 +106,39 @@ if grep -q "API_KEY=replace_with_long_random_string" "$APP_DIR/.env"; then
   sudo sed -i "s/API_KEY=replace_with_long_random_string/API_KEY=$RANDKEY/" "$APP_DIR/.env"
 fi
 
+# Ensure admin token
+if grep -q "ADMIN_TOKEN=replace_with_admin_token" "$APP_DIR/.env"; then
+  echo "==> Generating admin token"
+  ADM=$(openssl rand -hex 32)
+  sudo sed -i "s/ADMIN_TOKEN=replace_with_admin_token/ADMIN_TOKEN=$ADM/" "$APP_DIR/.env"
+fi
+
 # Helpful guidance for nginx rate limit zone and HSTS (not auto-applied to avoid breaking existing nginx.conf)
 echo "==> NOTE: For rate limiting, ensure you have this in /etc/nginx/nginx.conf inside 'http { ... }':"
 echo "    limit_req_zone \$binary_remote_addr zone=emailapi:10m rate=5r/s;"
 echo "   Then reload nginx. HSTS can be enabled on the HTTPS server block with:"
 echo "    add_header Strict-Transport-Security 'max-age=31536000; includeSubDomains; preload' always;"
+
+# Attempt to inject rate limit zone if not present (safe best-effort)
+if ! sudo grep -q "limit_req_zone .*zone=emailapi" /etc/nginx/nginx.conf; then
+  echo "==> Injecting rate limit zone into /etc/nginx/nginx.conf"
+  sudo cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.bak.$(date +%s)
+  sudo awk '/http\s*\{/ && !x{print;print "    limit_req_zone $binary_remote_addr zone=emailapi:10m rate=5r/s;";x=1;next}1' /etc/nginx/nginx.conf | sudo tee /tmp/nginx.conf >/dev/null
+  sudo mv /tmp/nginx.conf /etc/nginx/nginx.conf
+fi
+
+# Attempt to add HSTS to HTTPS server block created by certbot
+CONF_HTTPS=$(sudo grep -rl "server_name $DOMAIN;" /etc/nginx | head -n1 || true)
+if [[ -n "$CONF_HTTPS" ]]; then
+  if ! sudo grep -q "Strict-Transport-Security" "$CONF_HTTPS"; then
+    echo "==> Adding HSTS to $CONF_HTTPS"
+    sudo cp "$CONF_HTTPS" "$CONF_HTTPS.bak.$(date +%s)"
+    sudo awk '/server\s*\{/{inserver=1} inserver && /server_name/{print;print "    add_header Strict-Transport-Security \x27max-age=31536000; includeSubDomains; preload\x27 always;"; next} {print} /\}/{inserver=0}' "$CONF_HTTPS" | sudo tee /tmp/emailapi_https.conf >/dev/null
+    sudo mv /tmp/emailapi_https.conf "$CONF_HTTPS"
+  fi
+fi
+
+sudo nginx -t && sudo systemctl reload nginx || true
 
 cat <<SUMMARY
 
