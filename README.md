@@ -128,6 +128,35 @@ The app will prompt for credentials on first run, or you can set them manually i
 
 ## Deployment on Amazon EC2 (Red Hat 10)
 
+### One-line install (recommended)
+
+```bash
+wget -O install-emailapi.sh https://raw.githubusercontent.com/daijiong1977/emailapi-backend/main/deploy/install-emailapi.sh \
+  && sudo bash install-emailapi.sh -d emailapi.6ray.com -r https://github.com/daijiong1977/emailapi-backend.git
+```
+
+After install, edit `/opt/emailapi/.env` with your Gmail and app password, then:
+
+```bash
+sudo systemctl restart emailapi
+```
+
+### Maintenance scripts
+
+- Update to latest code and dependencies:
+  ```bash
+  sudo bash /opt/emailapi/deploy/update-emailapi.sh
+  ```
+  Optionally specify a branch:
+  ```bash
+  sudo bash /opt/emailapi/deploy/update-emailapi.sh main
+  ```
+
+- Uninstall everything:
+  ```bash
+  sudo bash /opt/emailapi/deploy/uninstall-emailapi.sh
+  ```
+
 ### 1. Launch EC2 Instance
 - Choose Red Hat Enterprise Linux 10 AMI
 - Configure security groups (allow port 8002 for API, 22 for SSH)
