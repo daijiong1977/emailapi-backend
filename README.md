@@ -65,6 +65,7 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8002
 ```http
 POST /send-email
 Content-Type: application/json
+X-API-Key: <your-api-key>
 
 ```json
 {
@@ -164,6 +165,14 @@ You can run it any time later to update credentials and test the SMTP login:
 
 ```bash
 sudo -u emailapi bash /opt/emailapi/deploy/config-gmail.sh
+```
+
+### API key configuration
+
+Set API_KEY in `/opt/emailapi/.env` and restart the service. All POST /send-email requests must include:
+
+```
+X-API-Key: <your-api-key>
 ```
 
 ### 1. Launch EC2 Instance

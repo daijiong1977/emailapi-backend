@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Header, status
 from pydantic import BaseModel, EmailStr
 from typing import Optional
 import os
@@ -20,6 +20,21 @@ class EmailResponse(BaseModel):
     message: str
     email_id: Optional[str] = None
 
+API_KEY = os.getenv("API_KEY")
+
+async def require_api_key(x_api_key: Optional[str] = Header(default=None)):
+    if not API_KEY:
+        # If not configured, deny to avoid open relay
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="API key not configured"
+        )
+    if x_api_key != API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key"
+        )
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize email service on startup"""
@@ -28,7 +43,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Email API Service", version="1.0.0", lifespan=lifespan)
 
-@app.post("/send-email", response_model=EmailResponse)
+@app.post("/send-email", response_model=EmailResponse, dependencies=[Depends(require_api_key)])
 async def send_email(email_request: EmailRequest, background_tasks: BackgroundTasks):
     """
     Send an email using Gmail SMTP
