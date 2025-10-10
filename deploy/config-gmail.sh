@@ -33,7 +33,19 @@ fi
 
 read -rsp "Enter Gmail App Password (16 chars, no spaces): " GMAIL_PASSWORD_INPUT || true
 echo
-GMAIL_PASSWORD_INPUT="${GMAIL_PASSWORD_INPUT// /}"
+# Normalize whitespace including non-breaking spaces, and enforce ASCII-only to avoid SMTP 'ascii' codec errors
+# Remove all Unicode/ASCII whitespace and NBSP (0xC2 0xA0 in UTF-8)
+GMAIL_PASSWORD_INPUT=$(printf '%s' "$GMAIL_PASSWORD_INPUT" | tr -d '[:space:]' | tr -d '\302\240')
+# Strip NBSP and regular spaces from email address as well
+GMAIL_USER_INPUT=$(printf '%s' "$GMAIL_USER_INPUT" | tr -d '\302\240')
+
+# Basic format validation
+if ! printf '%s' "$GMAIL_PASSWORD_INPUT" | grep -Eq '^[A-Za-z0-9]{16}$'; then
+  echo "WARNING: App password doesn't look like 16 alphanumeric characters. If pasted, ensure no hidden characters." >&2
+fi
+if ! printf '%s' "$GMAIL_USER_INPUT" | grep -Eq '^[^ @]+@[^ @]+\.[^ @]+$'; then
+  echo "WARNING: Gmail address format looks unusual. Continuing anyway." >&2
+fi
 if [[ -z "${GMAIL_PASSWORD_INPUT}" ]]; then
   echo "ERROR: App password is required" >&2
   exit 1
