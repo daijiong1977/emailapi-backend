@@ -55,6 +55,12 @@ else
   sudo -u "$APP_USER" git -C "$APP_DIR" pull --ff-only
 fi
 
+# Check if repo cloned successfully
+if [[ ! -f "$APP_DIR/requirements.txt" ]]; then
+  echo "ERROR: requirements.txt not found. Repo clone may have failed."
+  exit 1
+fi
+
 echo "==> Creating Python virtualenv"
 sudo -u "$APP_USER" python3 -m venv "$APP_DIR/venv"
 source "$APP_DIR/venv/bin/activate"
@@ -84,17 +90,29 @@ EOF
 fi
 
 echo "==> Installing systemd service"
+if [[ ! -f "$APP_DIR/deploy/emailapi.service" ]]; then
+  echo "ERROR: emailapi.service not found in $APP_DIR/deploy/"
+  exit 1
+fi
 sudo cp "$APP_DIR/deploy/emailapi.service" /etc/systemd/system/emailapi.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now emailapi
 
 echo "==> Installing Nginx site config for $DOMAIN"
+if [[ ! -f "$APP_DIR/deploy/emailapi.nginx.conf" ]]; then
+  echo "ERROR: emailapi.nginx.conf not found in $APP_DIR/deploy/"
+  exit 1
+fi
 sudo cp "$APP_DIR/deploy/emailapi.nginx.conf" "/etc/nginx/conf.d/emailapi.conf"
 sudo sed -i "s/server_name .*/server_name $DOMAIN;/" "/etc/nginx/conf.d/emailapi.conf"
 
 # Ensure rate limit zone exists before first nginx config test
 if ! sudo grep -q "limit_req_zone .*zone=emailapi" /etc/nginx/nginx.conf; then
   echo "==> Injecting rate limit zone into /etc/nginx/nginx.conf"
+  if ! sudo grep -q "http\s*{" /etc/nginx/nginx.conf; then
+    echo "ERROR: No 'http {' block found in /etc/nginx/nginx.conf. Cannot inject rate limit zone."
+    exit 1
+  fi
   sudo cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.bak.$(date +%s)
   # Insert immediately after opening http { block
   sudo awk '/http\s*\{/ && !x{print;print "    limit_req_zone \$binary_remote_addr zone=emailapi:10m rate=5r/s;";x=1;next}1' /etc/nginx/nginx.conf | sudo tee /tmp/nginx.conf >/dev/null
