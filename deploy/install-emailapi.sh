@@ -106,26 +106,9 @@ fi
 sudo cp "$APP_DIR/deploy/emailapi.nginx.conf" "/etc/nginx/conf.d/emailapi.conf"
 sudo sed -i "s/server_name .*/server_name $DOMAIN;/" "/etc/nginx/conf.d/emailapi.conf"
 
-# Ensure rate limit zone exists before first nginx config test
-if ! sudo grep -q "limit_req_zone .*zone=emailapi" /etc/nginx/nginx.conf; then
-  echo "==> Injecting rate limit zone into /etc/nginx/nginx.conf"
-  if ! sudo grep -q "http\s*{" /etc/nginx/nginx.conf; then
-    echo "ERROR: No 'http {' block found in /etc/nginx/nginx.conf. Cannot inject rate limit zone."
-    exit 1
-  fi
-  BACKUP="/etc/nginx/nginx.conf.bak.$(date +%s)"
-  sudo cp /etc/nginx/nginx.conf "$BACKUP"
-  # Insert immediately after opening http { block
-  sudo awk '/http\s*\{/ && !x{print;print "    limit_req_zone \$binary_remote_addr zone=emailapi:10m rate=5r/s;";x=1;next}1' /etc/nginx/nginx.conf | sudo tee /tmp/nginx.conf >/dev/null
-  sudo mv /tmp/nginx.conf /etc/nginx/nginx.conf
-  sudo chown root:root /etc/nginx/nginx.conf
-  sudo chmod 644 /etc/nginx/nginx.conf
-  if ! sudo nginx -t; then
-    echo "ERROR: Nginx config test failed after injection. Restoring backup."
-    sudo cp "$BACKUP" /etc/nginx/nginx.conf
-    exit 1
-  fi
-fi
+# Note: Rate limiting requires adding this to /etc/nginx/nginx.conf inside 'http { ... }':
+#    limit_req_zone $binary_remote_addr zone=emailapi:10m rate=5r/s;
+# Then reload nginx. Skipping auto-injection to avoid permission issues.
 
 sudo nginx -t
 sudo systemctl enable --now nginx
@@ -149,9 +132,10 @@ if grep -q "ADMIN_TOKEN=replace_with_admin_token" "$APP_DIR/.env"; then
 fi
 
 # Helpful guidance for nginx rate limit zone and HSTS
-echo "==> NOTE: Rate limiting is configured via a shared zone named 'emailapi'. If you need to change rates, edit /etc/nginx/nginx.conf and adjust the line:"
+echo "==> NOTE: For rate limiting, add this line to /etc/nginx/nginx.conf inside the 'http { ... }' block:"
 echo "    limit_req_zone \$binary_remote_addr zone=emailapi:10m rate=5r/s;"
-echo "   Then reload nginx. HSTS can be enabled on the HTTPS server block with:"
+echo "   Then run: sudo nginx -t && sudo systemctl reload nginx"
+echo "   HSTS can be enabled on the HTTPS server block with:"
 echo "    add_header Strict-Transport-Security 'max-age=31536000; includeSubDomains; preload' always;"
 
 # Attempt to add HSTS to HTTPS server block (best-effort)
