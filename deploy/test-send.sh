@@ -4,7 +4,8 @@
 # - Sends an email through the API and prints the response
 #
 # Usage:
-#   sudo bash /opt/emailapi/deploy/test-send.sh -t dd@6ray.com -s "test" -m "API" [-a https://emailapi.6ray.com] [-u cli-test] [-k key_id.secret]
+#   sudo bash /opt/emailapi/deploy/test-send.sh -t dd@6ray.com -s "test" -m "API" \
+#       [-a https://emailapi.6ray.com] [-u cli-test] [-k key_id.secret] [-A ADMIN_TOKEN]
 
 set -euo pipefail
 
@@ -16,12 +17,13 @@ SUBJECT=""
 MESSAGE=""
 USERNAME="cli-test-$(date +%s)"
 API_KEY=""
+ADMIN_OVERRIDE=""
 
 usage() {
   grep '^#' "$0" | sed 's/^# \{0,1\}//'
 }
 
-while getopts ":a:t:s:m:u:k:h" opt; do
+while getopts ":a:t:s:m:u:k:A:h" opt; do
   case $opt in
     a) API="$OPTARG" ;;
     t) TO="$OPTARG" ;;
@@ -29,6 +31,7 @@ while getopts ":a:t:s:m:u:k:h" opt; do
     m) MESSAGE="$OPTARG" ;;
     u) USERNAME="$OPTARG" ;;
     k) API_KEY="$OPTARG" ;;
+    A) ADMIN_OVERRIDE="$OPTARG" ;;
     h) usage; exit 0 ;;
     *) echo "Unknown option -$OPTARG"; usage; exit 1 ;;
   esac
@@ -46,7 +49,14 @@ if [[ -z "$API_KEY" ]]; then
     echo "ERROR: $ENV_FILE not found" >&2
     exit 3
   fi
-  ADMIN_TOKEN=$(grep -E '^ADMIN_TOKEN=' "$ENV_FILE" | cut -d= -f2- || true)
+  # Resolve admin token: CLI override > env var > .env file
+  if [[ -n "$ADMIN_OVERRIDE" ]]; then
+    ADMIN_TOKEN="$ADMIN_OVERRIDE"
+  elif [[ -n "${ADMIN_TOKEN:-}" ]]; then
+    ADMIN_TOKEN="$ADMIN_TOKEN"
+  else
+    ADMIN_TOKEN=$(grep -E '^ADMIN_TOKEN=' "$ENV_FILE" | cut -d= -f2- || true)
+  fi
   if [[ -z "$ADMIN_TOKEN" ]]; then
     echo "ERROR: ADMIN_TOKEN not found in $ENV_FILE; cannot create key automatically" >&2
     exit 3
