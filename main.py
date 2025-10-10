@@ -25,6 +25,7 @@ class EmailResponse(BaseModel):
 
 DB_PATH = os.getenv("API_KEYS_DB", "./api_keys.db")
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")  # for managing keys
+REG_TOKEN = os.getenv("REG_TOKEN")  # for client self-registration
 ALLOW_DOMAINS = [d.strip().lower() for d in os.getenv("ALLOW_DOMAINS", "").split(",") if d.strip()]
 BLOCK_DOMAINS = [d.strip().lower() for d in os.getenv("BLOCK_DOMAINS", "").split(",") if d.strip()]
 PANEL_PASSWORD = os.getenv("PANEL_PASSWORD", "771008")
@@ -281,6 +282,17 @@ async def admin_revoke_key(key_id: str, ok: bool = Depends(require_admin)):
 @app.get("/admin/keys")
 async def admin_list_keys(ok: bool = Depends(require_admin)):
     return {"keys": list_keys(DB_PATH)}
+
+# --- Client self-registration (optional) ---
+class RegisterKeyRequest(BaseModel):
+    username: str
+
+@app.post("/register/key")
+async def register_key(body: RegisterKeyRequest, x_registration_token: Optional[str] = Header(default=None)):
+    if not REG_TOKEN or x_registration_token != REG_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid registration token")
+    key = create_key(DB_PATH, body.username.strip())
+    return {"api_key": key}
 
 if __name__ == "__main__":
     import uvicorn

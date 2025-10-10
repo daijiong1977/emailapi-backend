@@ -136,6 +136,8 @@ wget -O install-emailapi.sh https://raw.githubusercontent.com/daijiong1977/email
   && sudo bash install-emailapi.sh -d emailapi.6ray.com -r https://github.com/daijiong1977/emailapi-backend.git
 ```
 
+Note: The installer does not install Certbot; HTTPS/SSL is assumed to be handled externally on this host. If you need to provision certificates later, use your existing method and reload Nginx.
+
 After install, edit `/opt/emailapi/.env` with your Gmail and app password, then:
 
 ```bash

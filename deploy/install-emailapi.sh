@@ -24,7 +24,7 @@ if [[ -z "$DOMAIN" || -z "$REPO" ]]; then
 fi
 
 echo "==> Installing system packages"
-DNF_PKGS=(python3 python3-pip git nginx certbot python3-certbot-nginx firewalld policycoreutils-python-utils)
+DNF_PKGS=(python3 python3-pip git nginx firewalld policycoreutils-python-utils)
 sudo dnf install -y "${DNF_PKGS[@]}"
 
 echo "==> Ensuring firewall for HTTP/HTTPS"
@@ -95,9 +95,8 @@ sudo nginx -t
 sudo systemctl enable --now nginx
 sudo systemctl reload nginx
 
-echo "==> Requesting TLS certificate for $DOMAIN"
-sudo certbot --nginx -d "$DOMAIN" --redirect -m "admin@$DOMAIN" --agree-tos -n || true
-sudo systemctl reload nginx || true
+# Skipping certificate provisioning (TLS assumed to be managed externally)
+echo "==> Skipping certificate provisioning; HTTPS expected to be pre-configured"
 
 # Ensure API_KEY not left as placeholder
 if grep -q "API_KEY=replace_with_long_random_string" "$APP_DIR/.env"; then
@@ -127,7 +126,7 @@ if ! sudo grep -q "limit_req_zone .*zone=emailapi" /etc/nginx/nginx.conf; then
   sudo mv /tmp/nginx.conf /etc/nginx/nginx.conf
 fi
 
-# Attempt to add HSTS to HTTPS server block created by certbot
+# Attempt to add HSTS to HTTPS server block (best-effort)
 CONF_HTTPS=$(sudo grep -rl "server_name $DOMAIN;" /etc/nginx | head -n1 || true)
 if [[ -n "$CONF_HTTPS" ]]; then
   if ! sudo grep -q "Strict-Transport-Security" "$CONF_HTTPS"; then
