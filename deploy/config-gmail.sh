@@ -117,8 +117,40 @@ echo "✅ API is healthy"
 echo "==> Sending a test email via the API"
 API_KEY=$(grep -E '^API_KEY=' "$ENV_FILE" | cut -d= -f2- || true)
 if [[ -z "$API_KEY" ]]; then
-  echo "❌ API_KEY not found in $ENV_FILE" >&2
-  exit 5
+  echo "ℹ️  No API_KEY found in $ENV_FILE; attempting to create a per-user API key via admin API."
+  ADMIN_TOKEN=$(grep -E '^ADMIN_TOKEN=' "$ENV_FILE" | cut -d= -f2- || true)
+  if [[ -z "$ADMIN_TOKEN" ]]; then
+    echo "❌ ADMIN_TOKEN not found in $ENV_FILE; cannot auto-provision API key." >&2
+    echo "   Options:"
+    echo "   - Open the admin panel and create a key: https://<your-domain>/admin/config"
+    echo "   - Or add ADMIN_TOKEN to $ENV_FILE and re-run this script."
+    exit 5
+  fi
+  USERNAME="setup-$(date +%s)"
+  ADMIN_CREATE_PAYLOAD=$(cat <<JSON
+{"username":"$USERNAME"}
+JSON
+)
+  curl -sS -X POST "$API_URL_LOCAL/admin/keys/create" \
+    -H "Content-Type: application/json" \
+    -H "X-Admin-Token: $ADMIN_TOKEN" \
+    --data "$ADMIN_CREATE_PAYLOAD" \
+    -o /tmp/emailapi_admin_create.json
+  API_KEY=$(python - <<'PY'
+import json,sys
+try:
+    data=json.load(open('/tmp/emailapi_admin_create.json'))
+    print(data.get('api_key',''))
+except Exception:
+    print('')
+PY
+)
+  if [[ -z "$API_KEY" ]]; then
+    echo "❌ Failed to create per-user API key. Response:" >&2
+    cat /tmp/emailapi_admin_create.json | sed 's/.*/    &/'
+    exit 5
+  fi
+  echo "✅ Created per-user API key for user '$USERNAME'"
 fi
 
 PAYLOAD=$(cat <<JSON
@@ -156,7 +188,7 @@ elif [[ "$HTTP_CODE" == "401" ]]; then
 {"username":"$USERNAME"}
 JSON
 )
-  curl -sS -X POST "$API_URL_LOCAL/admin/keys" \
+  curl -sS -X POST "$API_URL_LOCAL/admin/keys/create" \
     -H "Content-Type: application/json" \
     -H "X-Admin-Token: $ADMIN_TOKEN" \
     --data "$ADMIN_CREATE_PAYLOAD" \
