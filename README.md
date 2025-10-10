@@ -132,7 +132,7 @@ The app will prompt for credentials on first run, or you can set them manually i
 ### One-line install (recommended)
 
 ```bash
-wget -O install-emailapi.sh https://raw.githubusercontent.com/daijiong1977/emailapi-backend/main/deploy/install-emailapi.sh \
+curl -fsSL https://raw.githubusercontent.com/daijiong1977/emailapi-backend/main/deploy/install-emailapi.sh -o install-emailapi.sh \
   && sudo bash install-emailapi.sh -d emailapi.6ray.com -r https://github.com/daijiong1977/emailapi-backend.git
 ```
 
