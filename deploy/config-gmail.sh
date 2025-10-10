@@ -1,52 +1,82 @@
 #!/usr/bin/env bash
-# Configure Gmail credentials for Email API and test SMTP connection
-# Usage: sudo -u emailapi bash /opt/emailapi/deploy/config-gmail.sh
+# Configure Gmail credentials for Email API, restart the service, and run live tests.
+# Usage: sudo bash /opt/emailapi/deploy/config-gmail.sh
 set -euo pipefail
 
 APP_DIR="/opt/emailapi"
 ENV_FILE="$APP_DIR/.env"
+SERVICE_NAME="emailapi"
+API_URL_LOCAL="http://127.0.0.1:8002"
 
-if [[ ! -f "$ENV_FILE" ]]; then
-  echo "Creating $ENV_FILE"
-  cat > "$ENV_FILE" <<EOF
-# Gmail Configuration
-GMAIL_USER=
-GMAIL_APP_PASSWORD=
-EOF
-  chmod 600 "$ENV_FILE"
+require_file() {
+  if [[ ! -f "$1" ]]; then
+    echo "ERROR: Missing file: $1" >&2
+    exit 1
+  fi
+}
+
+echo "==> Preparing environment"
+require_file "$APP_DIR/venv/bin/activate"
+touch "$ENV_FILE"
+chmod 600 "$ENV_FILE"
+chown emailapi:emailapi "$ENV_FILE" || true
+
+# Load existing values without exporting to env
+GMAIL_USER_EXISTING=$(grep -E '^GMAIL_USER=' "$ENV_FILE" | cut -d= -f2- || true)
+
+read -rp "Enter Gmail address${GMAIL_USER_EXISTING:+ [$GMAIL_USER_EXISTING]}: " GMAIL_USER_INPUT || true
+GMAIL_USER_INPUT=${GMAIL_USER_INPUT:-$GMAIL_USER_EXISTING}
+if [[ -z "${GMAIL_USER_INPUT}" ]]; then
+  echo "ERROR: Gmail address is required" >&2
+  exit 1
 fi
 
-# Read existing values if present
-source "$ENV_FILE" || true
-
-read -rp "Enter Gmail address: " GMAIL_USER_INPUT
-read -rsp "Enter Gmail App Password (16 chars, no spaces): " GMAIL_PASSWORD_INPUT
+read -rsp "Enter Gmail App Password (16 chars, no spaces): " GMAIL_PASSWORD_INPUT || true
 echo
-
-# Normalize by removing spaces from app password
 GMAIL_PASSWORD_INPUT="${GMAIL_PASSWORD_INPUT// /}"
+if [[ -z "${GMAIL_PASSWORD_INPUT}" ]]; then
+  echo "ERROR: App password is required" >&2
+  exit 1
+fi
 
-# Write back to .env
-cat > "$ENV_FILE" <<EOF
-# Gmail Configuration
-GMAIL_USER=$GMAIL_USER_INPUT
-GMAIL_APP_PASSWORD=$GMAIL_PASSWORD_INPUT
-EOF
+read -rp "Enter a test recipient email (default: $GMAIL_USER_INPUT): " TEST_RECIP || true
+TEST_RECIP=${TEST_RECIP:-$GMAIL_USER_INPUT}
+
+echo "==> Updating $ENV_FILE (preserving other settings)"
+if grep -q '^GMAIL_USER=' "$ENV_FILE"; then
+  sed -i "s|^GMAIL_USER=.*|GMAIL_USER=$GMAIL_USER_INPUT|" "$ENV_FILE"
+else
+  echo "GMAIL_USER=$GMAIL_USER_INPUT" >> "$ENV_FILE"
+fi
+
+if grep -q '^GMAIL_APP_PASSWORD=' "$ENV_FILE"; then
+  sed -i "s|^GMAIL_APP_PASSWORD=.*|GMAIL_APP_PASSWORD=$GMAIL_PASSWORD_INPUT|" "$ENV_FILE"
+else
+  echo "GMAIL_APP_PASSWORD=$GMAIL_PASSWORD_INPUT" >> "$ENV_FILE"
+fi
+
 chmod 600 "$ENV_FILE"
-chown emailapi:emailapi "$ENV_FILE"
+chown emailapi:emailapi "$ENV_FILE" || true
 
-echo "==> Testing SMTP connection to Gmail..."
-# Activate venv and run a tiny Python snippet to test login
+echo "==> Testing SMTP authentication with Gmail"
 source "$APP_DIR/venv/bin/activate"
 python - <<'PY'
 import os, smtplib, sys
-user = os.getenv('GMAIL_USER')
-password = os.getenv('GMAIL_APP_PASSWORD')
+from pathlib import Path
+env_path = Path('/opt/emailapi/.env')
+env = {}
+if env_path.exists():
+    for line in env_path.read_text().splitlines():
+        if '=' in line and not line.strip().startswith('#'):
+            k,v = line.split('=',1)
+            env[k.strip()] = v.strip()
+user = env.get('GMAIL_USER')
+password = env.get('GMAIL_APP_PASSWORD')
 if not user or not password:
-    print('❌ Missing GMAIL_USER or GMAIL_APP_PASSWORD')
+    print('❌ Missing GMAIL_USER or GMAIL_APP_PASSWORD in .env')
     sys.exit(1)
 try:
-    server = smtplib.SMTP('smtp.gmail.com', 587, timeout=15)
+    server = smtplib.SMTP('smtp.gmail.com', 587, timeout=20)
     server.starttls()
     server.login(user, password)
     server.quit()
@@ -59,8 +89,49 @@ except Exception as e:
     sys.exit(3)
 PY
 
-echo "==> Restarting Email API service to load new credentials"
-sudo systemctl restart emailapi
-sudo systemctl status emailapi --no-pager
+echo "==> Restarting service to apply credentials"
+sudo systemctl restart "$SERVICE_NAME"
+sleep 1
+sudo systemctl --no-pager --full status "$SERVICE_NAME" || true
 
-echo "✅ Gmail configuration complete"
+echo "==> Verifying API health"
+if ! curl -fsS "$API_URL_LOCAL/health" >/dev/null; then
+  echo "❌ API health check failed at $API_URL_LOCAL/health" >&2
+  journalctl -u "$SERVICE_NAME" -n 50 --no-pager || true
+  exit 4
+fi
+echo "✅ API is healthy"
+
+echo "==> Sending a test email via the API"
+API_KEY=$(grep -E '^API_KEY=' "$ENV_FILE" | cut -d= -f2- || true)
+if [[ -z "$API_KEY" ]]; then
+  echo "❌ API_KEY not found in $ENV_FILE" >&2
+  exit 5
+fi
+
+PAYLOAD=$(cat <<JSON
+{
+  "to_email": "$TEST_RECIP",
+  "subject": "Email API setup test",
+  "message": "Hello from Email API setup script at $(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+  "from_name": "Email API Setup"
+}
+JSON
+)
+
+HTTP_CODE=$(curl -sS -o /tmp/emailapi_send_test.json -w "%{http_code}" \
+  -X POST "$API_URL_LOCAL/send-email" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
+  --data "$PAYLOAD")
+
+if [[ "$HTTP_CODE" == "200" ]]; then
+  echo "✅ Test email requested successfully. Response:"
+  cat /tmp/emailapi_send_test.json | sed 's/.*/    &/'
+else
+  echo "❌ Test email failed with HTTP $HTTP_CODE. Response:"
+  cat /tmp/emailapi_send_test.json | sed 's/.*/    &/'
+  exit 6
+fi
+
+echo "✅ Gmail configuration and end-to-end test completed"
