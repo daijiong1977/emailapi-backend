@@ -97,7 +97,7 @@ if ! sudo grep -q "limit_req_zone .*zone=emailapi" /etc/nginx/nginx.conf; then
   echo "==> Injecting rate limit zone into /etc/nginx/nginx.conf"
   sudo cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.bak.$(date +%s)
   # Insert immediately after opening http { block
-  sudo awk '/http\s*\{/ && !x{print;print "    limit_req_zone $binary_remote_addr zone=emailapi:10m rate=5r/s;";x=1;next}1' /etc/nginx/nginx.conf | sudo tee /tmp/nginx.conf >/dev/null
+  sudo awk '/http\s*\{/ && !x{print;print "    limit_req_zone \$binary_remote_addr zone=emailapi:10m rate=5r/s;";x=1;next}1' /etc/nginx/nginx.conf | sudo tee /tmp/nginx.conf >/dev/null
   sudo mv /tmp/nginx.conf /etc/nginx/nginx.conf
 fi
 
