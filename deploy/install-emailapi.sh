@@ -113,10 +113,18 @@ if ! sudo grep -q "limit_req_zone .*zone=emailapi" /etc/nginx/nginx.conf; then
     echo "ERROR: No 'http {' block found in /etc/nginx/nginx.conf. Cannot inject rate limit zone."
     exit 1
   fi
-  sudo cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.bak.$(date +%s)
+  BACKUP="/etc/nginx/nginx.conf.bak.$(date +%s)"
+  sudo cp /etc/nginx/nginx.conf "$BACKUP"
   # Insert immediately after opening http { block
   sudo awk '/http\s*\{/ && !x{print;print "    limit_req_zone \$binary_remote_addr zone=emailapi:10m rate=5r/s;";x=1;next}1' /etc/nginx/nginx.conf | sudo tee /tmp/nginx.conf >/dev/null
   sudo mv /tmp/nginx.conf /etc/nginx/nginx.conf
+  sudo chown root:root /etc/nginx/nginx.conf
+  sudo chmod 644 /etc/nginx/nginx.conf
+  if ! sudo nginx -t; then
+    echo "ERROR: Nginx config test failed after injection. Restoring backup."
+    sudo cp "$BACKUP" /etc/nginx/nginx.conf
+    exit 1
+  fi
 fi
 
 sudo nginx -t
