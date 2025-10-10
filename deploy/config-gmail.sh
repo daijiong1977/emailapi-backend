@@ -140,6 +140,59 @@ HTTP_CODE=$(curl -sS -o /tmp/emailapi_send_test.json -w "%{http_code}" \
 if [[ "$HTTP_CODE" == "200" ]]; then
   echo "✅ Test email requested successfully. Response:"
   cat /tmp/emailapi_send_test.json | sed 's/.*/    &/'
+elif [[ "$HTTP_CODE" == "401" ]]; then
+  echo "⚠️  Received 401 Unauthorized with current API_KEY. Attempting to create a per-user API key via admin API."
+  ADMIN_TOKEN=$(grep -E '^ADMIN_TOKEN=' "$ENV_FILE" | cut -d= -f2- || true)
+  if [[ -z "$ADMIN_TOKEN" ]]; then
+    echo "❌ ADMIN_TOKEN not found in $ENV_FILE; cannot auto-provision API key." >&2
+    echo "   Options:"
+    echo "   - Open the admin panel and create a key: https://<your-domain>/admin/config"
+    echo "   - Or set REG_TOKEN and use client registration headers."
+    exit 6
+  fi
+
+  USERNAME="setup-$(date +%s)"
+  ADMIN_CREATE_PAYLOAD=$(cat <<JSON
+{"username":"$USERNAME"}
+JSON
+)
+  curl -sS -X POST "$API_URL_LOCAL/admin/keys" \
+    -H "Content-Type: application/json" \
+    -H "X-Admin-Token: $ADMIN_TOKEN" \
+    --data "$ADMIN_CREATE_PAYLOAD" \
+    -o /tmp/emailapi_admin_create.json
+
+  NEW_KEY=$(python - <<'PY'
+import json,sys
+try:
+    data=json.load(open('/tmp/emailapi_admin_create.json'))
+    print(data.get('api_key',''))
+except Exception:
+    print('')
+PY
+)
+  if [[ -z "$NEW_KEY" ]]; then
+    echo "❌ Failed to create per-user API key. Response:" >&2
+    cat /tmp/emailapi_admin_create.json | sed 's/.*/    &/'
+    exit 6
+  fi
+  echo "✅ Created per-user API key for user '$USERNAME'"
+  API_KEY="$NEW_KEY"
+
+  echo "==> Retrying test email with per-user key"
+  HTTP_CODE=$(curl -sS -o /tmp/emailapi_send_test.json -w "%{http_code}" \
+    -X POST "$API_URL_LOCAL/send-email" \
+    -H "Content-Type: application/json" \
+    -H "X-API-Key: $API_KEY" \
+    --data "$PAYLOAD")
+  if [[ "$HTTP_CODE" == "200" ]]; then
+    echo "✅ Test email requested successfully with per-user key. Response:"
+    cat /tmp/emailapi_send_test.json | sed 's/.*/    &/'
+  else
+    echo "❌ Test email still failing with HTTP $HTTP_CODE. Response:"
+    cat /tmp/emailapi_send_test.json | sed 's/.*/    &/'
+    exit 6
+  fi
 else
   echo "❌ Test email failed with HTTP $HTTP_CODE. Response:"
   cat /tmp/emailapi_send_test.json | sed 's/.*/    &/'
