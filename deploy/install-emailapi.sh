@@ -91,6 +91,16 @@ sudo systemctl enable --now emailapi
 echo "==> Installing Nginx site config for $DOMAIN"
 sudo cp "$APP_DIR/deploy/emailapi.nginx.conf" "/etc/nginx/conf.d/emailapi.conf"
 sudo sed -i "s/server_name .*/server_name $DOMAIN;/" "/etc/nginx/conf.d/emailapi.conf"
+
+# Ensure rate limit zone exists before first nginx config test
+if ! sudo grep -q "limit_req_zone .*zone=emailapi" /etc/nginx/nginx.conf; then
+  echo "==> Injecting rate limit zone into /etc/nginx/nginx.conf"
+  sudo cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.bak.$(date +%s)
+  # Insert immediately after opening http { block
+  sudo awk '/http\s*\{/ && !x{print;print "    limit_req_zone $binary_remote_addr zone=emailapi:10m rate=5r/s;";x=1;next}1' /etc/nginx/nginx.conf | sudo tee /tmp/nginx.conf >/dev/null
+  sudo mv /tmp/nginx.conf /etc/nginx/nginx.conf
+fi
+
 sudo nginx -t
 sudo systemctl enable --now nginx
 sudo systemctl reload nginx
@@ -112,19 +122,11 @@ if grep -q "ADMIN_TOKEN=replace_with_admin_token" "$APP_DIR/.env"; then
   sudo sed -i "s/ADMIN_TOKEN=replace_with_admin_token/ADMIN_TOKEN=$ADM/" "$APP_DIR/.env"
 fi
 
-# Helpful guidance for nginx rate limit zone and HSTS (not auto-applied to avoid breaking existing nginx.conf)
-echo "==> NOTE: For rate limiting, ensure you have this in /etc/nginx/nginx.conf inside 'http { ... }':"
+# Helpful guidance for nginx rate limit zone and HSTS
+echo "==> NOTE: Rate limiting is configured via a shared zone named 'emailapi'. If you need to change rates, edit /etc/nginx/nginx.conf and adjust the line:"
 echo "    limit_req_zone \$binary_remote_addr zone=emailapi:10m rate=5r/s;"
 echo "   Then reload nginx. HSTS can be enabled on the HTTPS server block with:"
 echo "    add_header Strict-Transport-Security 'max-age=31536000; includeSubDomains; preload' always;"
-
-# Attempt to inject rate limit zone if not present (safe best-effort)
-if ! sudo grep -q "limit_req_zone .*zone=emailapi" /etc/nginx/nginx.conf; then
-  echo "==> Injecting rate limit zone into /etc/nginx/nginx.conf"
-  sudo cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.bak.$(date +%s)
-  sudo awk '/http\s*\{/ && !x{print;print "    limit_req_zone $binary_remote_addr zone=emailapi:10m rate=5r/s;";x=1;next}1' /etc/nginx/nginx.conf | sudo tee /tmp/nginx.conf >/dev/null
-  sudo mv /tmp/nginx.conf /etc/nginx/nginx.conf
-fi
 
 # Attempt to add HSTS to HTTPS server block (best-effort)
 CONF_HTTPS=$(sudo grep -rl "server_name $DOMAIN;" /etc/nginx | head -n1 || true)
