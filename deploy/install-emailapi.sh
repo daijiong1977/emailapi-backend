@@ -1,30 +1,7 @@
 #!/usr/bin/env bash
 # Email API automated installer for RHEL (EC2)
-# Usage: sudo bash install-emailaecho "==> Installing Nginx site config for $DOMAIN"
-if [[ ! -f "$APP_DIR/deploy/emailapi.nginx.conf" ]]; then
-  echo "ERROR: emailapi.nginx.conf not found in $APP_DIR/deploy/"
-  exit 1
-fi
-sudo cp "$APP_DIR/deploy/emailapi.nginx.conf" "/etc/nginx/conf.d/emailapi.conf"
-sudo sed -i "s/server_name .*/server_name $DOMAIN;/" "/etc/nginx/conf.d/emailapi.conf"
+# Usage: sudo bash install-emailapi.sh -d <domain> -r <git_repo_url> [-b <branch>]
 
-# Ensure proper permissions and SELinux context
-sudo chown root:root "/etc/nginx/conf.d/emailapi.conf"
-sudo chmod 644 "/etc/nginx/conf.d/emailapi.conf"
-sudo restorecon "/etc/nginx/conf.d/emailapi.conf" 2>/dev/null || true
-sudo chmod 755 /etc/nginx/conf.d
-sudo chown root:root /etc/nginx/conf.d
-sudo chmod 644 /etc/nginx/nginx.conf
-sudo chown root:root /etc/nginx/nginx.conf
-sudo restorecon /etc/nginx/nginx.conf 2>/dev/null || true
-
-# Note: Rate limiting requires adding this to /etc/nginx/nginx.conf inside 'http { ... }':
-#    limit_req_zone $binary_remote_addr zone=emailapi:10m rate=5r/s;
-# Then run: sudo nginx -t && sudo systemctl reload nginx
-
-sudo nginx -t
-sudo systemctl enable --now nginx
-sudo systemctl reload nginxpi.6ray.com -r <git_repo_url> [-b <branch>]
 set -euo pipefail
 
 DOMAIN=""
@@ -33,6 +10,7 @@ BRANCH="main"
 APP_DIR="/opt/emailapi"
 APP_USER="emailapi"
 
+# Parse arguments
 while getopts ":d:r:b:" opt; do
   case $opt in
     d) DOMAIN="$OPTARG" ;;
@@ -69,6 +47,7 @@ echo "==> Preparing application directory: $APP_DIR"
 sudo mkdir -p "$APP_DIR"
 sudo chown -R "$APP_USER":"$APP_USER" "$APP_DIR"
 
+# Clone or update repository
 if [[ ! -d "$APP_DIR/.git" ]]; then
   echo "==> Cloning repository $REPO (branch: $BRANCH)"
   sudo -u "$APP_USER" git clone -b "$BRANCH" "$REPO" "$APP_DIR"
@@ -79,7 +58,7 @@ else
   sudo -u "$APP_USER" git -C "$APP_DIR" pull --ff-only
 fi
 
-# Check if repo cloned successfully
+# Sanity check
 if [[ ! -f "$APP_DIR/requirements.txt" ]]; then
   echo "ERROR: requirements.txt not found. Repo clone may have failed."
   exit 1
@@ -127,12 +106,24 @@ if [[ ! -f "$APP_DIR/deploy/emailapi.nginx.conf" ]]; then
   echo "ERROR: emailapi.nginx.conf not found in $APP_DIR/deploy/"
   exit 1
 fi
-sudo cp "$APP_DIR/deploy/emailapi.nginx.conf" "/etc/nginx/conf.d/emailapi.conf"
+# Install with correct owner/mode to avoid permission issues
+sudo install -o root -g root -m 0644 "$APP_DIR/deploy/emailapi.nginx.conf" "/etc/nginx/conf.d/emailapi.conf"
 sudo sed -i "s/server_name .*/server_name $DOMAIN;/" "/etc/nginx/conf.d/emailapi.conf"
+
+# Ensure directory/file permissions and SELinux contexts
+sudo chmod 755 /etc/nginx || true
+sudo chown root:root /etc/nginx || true
+sudo chmod 755 /etc/nginx/conf.d || true
+sudo chown root:root /etc/nginx/conf.d || true
+sudo chmod 644 /etc/nginx/nginx.conf || true
+sudo chown root:root /etc/nginx/nginx.conf || true
+sudo chmod 644 /etc/nginx/conf.d/emailapi.conf || true
+sudo chown root:root /etc/nginx/conf.d/emailapi.conf || true
+sudo restorecon -Rv /etc/nginx 2>/dev/null || true
 
 # Note: Rate limiting requires adding this to /etc/nginx/nginx.conf inside 'http { ... }':
 #    limit_req_zone $binary_remote_addr zone=emailapi:10m rate=5r/s;
-# Then reload nginx. Skipping auto-injection to avoid permission issues.
+# Then run: sudo nginx -t && sudo systemctl reload nginx
 
 sudo nginx -t
 sudo systemctl enable --now nginx
@@ -188,7 +179,7 @@ Next steps:
 5) Test email:
    curl -X POST https://$DOMAIN/send-email \
     -H "Content-Type: application/json" \
-    -H "X-API-Key: $(grep ^API_KEY= "$APP_DIR/.env" | cut -d= -f2)" \
+    -H "X-API-Key: $(grep ^API_KEY= \"$APP_DIR/.env\" | cut -d= -f2)" \
      -d '{"to_email":"self@6ray.com","subject":"API Test","message":"Hello from Email API","from_name":"Email API"}'
 
 SUMMARY
