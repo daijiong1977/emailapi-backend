@@ -7,7 +7,7 @@ import os
 from contextlib import asynccontextmanager
 from email_service import EmailService
 from config import Config
-from api_keys import init_db, verify_key, create_key, revoke_key, list_keys
+from api_keys import init_db, verify_key, create_key, revoke_key, list_keys, delete_seed_user, delete_all_seed_users
 
 email_service = EmailService()
 config = Config()
@@ -178,6 +178,7 @@ def _render_panel(message: str = "") -> str:
     gmail_user = config.gmail_user or ""
     allow = ",".join(ALLOW_DOMAINS)
     block = ",".join(BLOCK_DOMAINS)
+    keys = list_keys(DB_PATH)
     html = f"""
     <html><head><title>Email API Config</title>
     <style>body{{font-family:sans-serif;max-width:800px;margin:2rem auto;padding:0 1rem}}form{{border:1px solid #ddd;padding:1rem;margin-bottom:1rem;border-radius:8px}}label{{display:block;margin:.5rem 0 .25rem}}input[type=text],input[type=password],textarea{{width:100%;padding:.5rem}}button{{margin-top:.75rem;padding:.5rem 1rem}}</style>
@@ -202,12 +203,36 @@ def _render_panel(message: str = "") -> str:
       <button type="submit">Save Domain Policy</button>
     </form>
 
-    <h2>Create iOS Client API Key</h2>
+        <h2>Create iOS Client API Key</h2>
     <form method="post" action="/admin/config/create-key">
       <label>Username/Device ID</label>
       <input name="username" type="text" placeholder="ios-client-1" />
       <button type="submit">Create Key</button>
     </form>
+
+        <h2>Seed Users</h2>
+        <form method="post" action="/admin/config/create-seed">
+            <label>Seed Username</label>
+            <input name="username" type="text" placeholder="seed-user-1" />
+            <button type="submit">Create Seed User Key</button>
+        </form>
+        <form method="post" action="/admin/config/delete-seed">
+            <label>Delete Seed Username</label>
+            <input name="username" type="text" placeholder="seed-user-1" />
+            <button type="submit">Delete Seed User Keys</button>
+        </form>
+        <form method="post" action="/admin/config/delete-all-seeds">
+            <p>Delete all seed user keys (irreversible).</p>
+            <button type="submit" onclick="return confirm('Delete ALL seed user keys?')">Delete All Seed Users</button>
+        </form>
+
+        <h2>Existing Keys</h2>
+        <div style="overflow:auto;max-height:300px;border:1px solid #ddd;padding:.5rem;border-radius:6px">
+            <table width="100%" cellpadding="4" cellspacing="0">
+                <tr><th align="left">Key ID</th><th align="left">Username</th><th align="left">Seed</th><th align="left">Created</th><th align="left">Revoked</th></tr>
+                {''.join(f"<tr><td>{k['key_id']}</td><td>{k['username']}</td><td>{'yes' if k.get('is_seed') else ''}</td><td>{k['created_at']}</td><td>{k['revoked_at'] or ''}</td></tr>" for k in keys)}
+            </table>
+        </div>
 
     <h2>Admin Token</h2>
     <form method="post" action="/admin/config/rotate-admin">
@@ -263,6 +288,24 @@ async def admin_config_rotate_admin(_: bool = Depends(_panel_auth)):
     _save_env_map({"ADMIN_TOKEN": new_tok})
     _reload_runtime_from_env()
     return HTMLResponse(content=_render_panel("Admin token rotated."))
+
+@app.post("/admin/config/create-seed")
+async def admin_config_create_seed(username: str = Form(...), _: bool = Depends(_panel_auth)):
+    key = create_key(DB_PATH, username.strip(), is_seed=True)
+    msg = f"Created SEED key for {username}: <code>{key}</code>"
+    return HTMLResponse(content=_render_panel(msg))
+
+@app.post("/admin/config/delete-seed")
+async def admin_config_delete_seed(username: str = Form(...), _: bool = Depends(_panel_auth)):
+    deleted = delete_seed_user(DB_PATH, username.strip())
+    msg = f"Deleted {deleted} keys for seed user {username}."
+    return HTMLResponse(content=_render_panel(msg))
+
+@app.post("/admin/config/delete-all-seeds")
+async def admin_config_delete_all_seeds(_: bool = Depends(_panel_auth)):
+    deleted = delete_all_seed_users(DB_PATH)
+    msg = f"Deleted ALL seed user keys: {deleted} removed."
+    return HTMLResponse(content=_render_panel(msg))
 # --- Admin endpoints ---
 class CreateKeyRequest(BaseModel):
     username: str

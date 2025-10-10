@@ -28,6 +28,11 @@ def init_db(db_path: str):
             )
             """
         )
+        # Migration: add is_seed column if missing
+        cur = conn.execute("PRAGMA table_info(api_keys)")
+        cols = {row[1] for row in cur.fetchall()}
+        if 'is_seed' not in cols:
+            conn.execute("ALTER TABLE api_keys ADD COLUMN is_seed INTEGER DEFAULT 0")
     conn.close()
 
 
@@ -35,7 +40,7 @@ def _hash_secret(secret: str, salt: str) -> str:
     return hashlib.sha256((salt + secret).encode('utf-8')).hexdigest()
 
 
-def create_key(db_path: str, username: str) -> str:
+def create_key(db_path: str, username: str, is_seed: bool = False) -> str:
     """Create a new API key for a user. Returns the client key string 'key_id.secret'."""
     key_id = secrets.token_hex(8)
     secret = secrets.token_hex(24)
@@ -45,8 +50,8 @@ def create_key(db_path: str, username: str) -> str:
     conn = _connect(db_path)
     with conn:
         conn.execute(
-            "INSERT INTO api_keys (key_id, username, secret_hash, salt, created_at, revoked_at) VALUES (?, ?, ?, ?, ?, NULL)",
-            (key_id, username, secret_hash, salt, now),
+            "INSERT INTO api_keys (key_id, username, secret_hash, salt, created_at, revoked_at, is_seed) VALUES (?, ?, ?, ?, ?, NULL, ?)",
+            (key_id, username, secret_hash, salt, now, 1 if is_seed else 0),
         )
     conn.close()
     return f"{key_id}.{secret}"
@@ -63,7 +68,7 @@ def revoke_key(db_path: str, key_id: str) -> bool:
 
 def list_keys(db_path: str) -> List[Dict]:
     conn = _connect(db_path)
-    cur = conn.execute("SELECT key_id, username, created_at, revoked_at FROM api_keys ORDER BY created_at DESC")
+    cur = conn.execute("SELECT key_id, username, created_at, revoked_at, COALESCE(is_seed,0) as is_seed FROM api_keys ORDER BY created_at DESC")
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
     return rows
@@ -86,3 +91,23 @@ def verify_key(db_path: str, client_key: str) -> Optional[str]:
     if secrets.compare_digest(calc, row["secret_hash"]):
         return row["username"]
     return None
+
+
+def delete_seed_user(db_path: str, username: str) -> int:
+    """Delete all keys for a seed username. Returns number of rows deleted."""
+    conn = _connect(db_path)
+    with conn:
+        cur = conn.execute("DELETE FROM api_keys WHERE username=? AND COALESCE(is_seed,0)=1", (username,))
+        count = cur.rowcount
+    conn.close()
+    return count
+
+
+def delete_all_seed_users(db_path: str) -> int:
+    """Delete all seed user keys. Returns number of rows deleted."""
+    conn = _connect(db_path)
+    with conn:
+        cur = conn.execute("DELETE FROM api_keys WHERE COALESCE(is_seed,0)=1")
+        count = cur.rowcount
+    conn.close()
+    return count
