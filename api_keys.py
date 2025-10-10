@@ -2,14 +2,32 @@ import os
 import sqlite3
 import secrets
 import hashlib
+import base64
 import time
 from typing import Optional, List, Dict
+
+from cryptography.fernet import Fernet
 
 
 def _connect(db_path: str):
     conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+_DEVICE_CIPHER: Optional[Fernet] = None
+
+
+def _get_device_cipher() -> Fernet:
+    global _DEVICE_CIPHER
+    if _DEVICE_CIPHER is not None:
+        return _DEVICE_CIPHER
+    secret = os.getenv("DEVICE_KEY_SECRET") or os.getenv("ADMIN_TOKEN")
+    if not secret:
+        raise RuntimeError("DEVICE_KEY_SECRET or ADMIN_TOKEN must be configured for device provisioning")
+    key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode("utf-8")).digest())
+    _DEVICE_CIPHER = Fernet(key)
+    return _DEVICE_CIPHER
 
 
 def init_db(db_path: str):
@@ -33,6 +51,21 @@ def init_db(db_path: str):
         cols = {row[1] for row in cur.fetchall()}
         if 'is_seed' not in cols:
             conn.execute("ALTER TABLE api_keys ADD COLUMN is_seed INTEGER DEFAULT 0")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS client_devices (
+                device_id TEXT PRIMARY KEY,
+                username TEXT NOT NULL,
+                key_id TEXT NOT NULL UNIQUE,
+                encrypted_api_key TEXT NOT NULL,
+                display_name TEXT,
+                created_at INTEGER NOT NULL,
+                last_seen_at INTEGER NOT NULL,
+                disabled INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY(key_id) REFERENCES api_keys(key_id)
+            )
+            """
+        )
     conn.close()
 
 
@@ -55,6 +88,84 @@ def create_key(db_path: str, username: str, is_seed: bool = False) -> str:
         )
     conn.close()
     return f"{key_id}.{secret}"
+
+
+def _encrypt_api_key(plain_key: str) -> str:
+    cipher = _get_device_cipher()
+    return cipher.encrypt(plain_key.encode("utf-8")).decode("utf-8")
+
+
+def _decrypt_api_key(encrypted_key: str) -> str:
+    cipher = _get_device_cipher()
+    return cipher.decrypt(encrypted_key.encode("utf-8")).decode("utf-8")
+
+
+def register_device(
+    db_path: str,
+    *,
+    device_id: str,
+    username: str,
+    key_id: str,
+    api_key_plain: str,
+    display_name: Optional[str] = None,
+) -> None:
+    encrypted = _encrypt_api_key(api_key_plain)
+    now = int(time.time())
+    conn = _connect(db_path)
+    with conn:
+        conn.execute(
+            """
+            INSERT INTO client_devices (device_id, username, key_id, encrypted_api_key, display_name, created_at, last_seen_at, disabled)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+            """,
+            (device_id, username, key_id, encrypted, display_name, now, now),
+        )
+    conn.close()
+
+
+def get_device(db_path: str, device_id: str) -> Optional[Dict]:
+    conn = _connect(db_path)
+    cur = conn.execute(
+        "SELECT device_id, username, key_id, encrypted_api_key, display_name, created_at, last_seen_at, disabled FROM client_devices WHERE device_id=?",
+        (device_id,),
+    )
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+    device = dict(row)
+    device["api_key"] = _decrypt_api_key(device["encrypted_api_key"])
+    device.pop("encrypted_api_key", None)
+    return device
+
+
+def touch_device(db_path: str, device_id: str, display_name: Optional[str] = None) -> None:
+    now = int(time.time())
+    conn = _connect(db_path)
+    with conn:
+        if display_name is not None:
+            conn.execute(
+                "UPDATE client_devices SET last_seen_at=?, display_name=? WHERE device_id=?",
+                (now, display_name, device_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE client_devices SET last_seen_at=? WHERE device_id=?",
+                (now, device_id),
+            )
+    conn.close()
+
+
+def disable_device(db_path: str, device_id: str) -> bool:
+    conn = _connect(db_path)
+    with conn:
+        cur = conn.execute(
+            "UPDATE client_devices SET disabled=1 WHERE device_id=? AND disabled=0",
+            (device_id,),
+        )
+        changed = cur.rowcount
+    conn.close()
+    return changed > 0
 
 
 def revoke_key(db_path: str, key_id: str) -> bool:

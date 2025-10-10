@@ -86,6 +86,31 @@ X-API-Key: <your-api-key>
 }
 ```
 
+### Client Bootstrap
+```http
+POST /client/bootstrap
+Content-Type: application/json
+```
+
+**Request:**
+```json
+{
+  "device_id": "ios-device-uuid",
+  "display_name": "Alice’s iPhone"
+}
+```
+
+**Response:**
+```json
+{
+  "device_id": "ios-device-uuid",
+  "username": "ios-abc123def456",
+  "api_key": "<key_id>.<secret>"
+}
+```
+
+The endpoint is idempotent: the same `device_id` receives the same API key on subsequent calls. If a device is disabled by an administrator the route returns HTTP 403.
+
 ### Health Check
 ```http
 GET /health

@@ -1,13 +1,26 @@
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Header, status, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from pydantic import BaseModel, EmailStr
-from typing import Optional
+from pydantic import BaseModel, EmailStr, Field, ConfigDict
+from typing import Optional, Annotated
+import sqlite3
 import os
+import string
 from contextlib import asynccontextmanager
 from email_service import EmailService
 from config import Config
-from api_keys import init_db, verify_key, create_key, revoke_key, list_keys, delete_seed_user, delete_all_seed_users
+from api_keys import (
+    init_db,
+    verify_key,
+    create_key,
+    revoke_key,
+    list_keys,
+    delete_seed_user,
+    delete_all_seed_users,
+    register_device,
+    get_device,
+    touch_device,
+)
 
 email_service = EmailService()
 config = Config()
@@ -23,15 +36,62 @@ class EmailResponse(BaseModel):
     message: str
     email_id: Optional[str] = None
 
+
+class BootstrapRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    device_id: Annotated[str, Field(min_length=8, max_length=128)]
+    display_name: Optional[str] = None
+
+
+class BootstrapResponse(BaseModel):
+    device_id: str
+    api_key: str
+    username: str
+
+
 DB_PATH = os.getenv("API_KEYS_DB", "./api_keys.db")
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")  # for managing keys
 REG_TOKEN = os.getenv("REG_TOKEN")  # for client self-registration
+DEVICE_USERNAME_PREFIX = os.getenv("DEVICE_USERNAME_PREFIX", "ios")
+MIN_DEVICE_ID_LENGTH = int(os.getenv("DEVICE_ID_MIN_LENGTH", "16"))
 ALLOW_DOMAINS = [d.strip().lower() for d in os.getenv("ALLOW_DOMAINS", "").split(",") if d.strip()]
 BLOCK_DOMAINS = [d.strip().lower() for d in os.getenv("BLOCK_DOMAINS", "").split(",") if d.strip()]
 PANEL_PASSWORD = os.getenv("PANEL_PASSWORD", "771008")
 ENV_FILE_PATH = os.getenv("ENV_FILE_PATH", ".env")
 
 basic_security = HTTPBasic()
+
+
+def _normalize_display_name(name: Optional[str]) -> Optional[str]:
+    if name is None:
+        return None
+    cleaned = name.strip()
+    if not cleaned:
+        return None
+    return cleaned[:120]
+
+
+def _generate_device_username(device_id: str) -> str:
+    suffix = device_id.replace("-", "").lower()
+    if len(suffix) < 6:
+        suffix = suffix.ljust(6, "0")
+    suffix = suffix[:12]
+    return f"{DEVICE_USERNAME_PREFIX}-{suffix}"
+
+
+def _validate_device_id(raw_id: str) -> str:
+    device_id = raw_id.strip()
+    if len(device_id) < MIN_DEVICE_ID_LENGTH:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"device_id must be at least {MIN_DEVICE_ID_LENGTH} characters",
+        )
+    allowed_chars = set(string.ascii_letters + string.digits + "-_.:@")
+    if any(ch not in allowed_chars for ch in device_id):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="device_id contains invalid characters")
+    if len(device_id) > 128:
+        device_id = device_id[:128]
+    return device_id
 
 async def require_api_key(x_api_key: Optional[str] = Header(default=None)):
     """Require a valid per-user client key in the form key_id.secret"""
@@ -129,6 +189,51 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(title="Email API Service", version="1.0.0", lifespan=lifespan)
+
+
+@app.post("/client/bootstrap", response_model=BootstrapResponse)
+async def client_bootstrap(payload: BootstrapRequest):
+    device_id = _validate_device_id(payload.device_id)
+    display_name = _normalize_display_name(payload.display_name)
+
+    existing = get_device(DB_PATH, device_id)
+    if existing:
+        if existing.get("disabled"):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Device is disabled")
+        touch_device(DB_PATH, device_id, display_name=display_name)
+        return BootstrapResponse(
+            device_id=device_id,
+            api_key=existing["api_key"],
+            username=existing["username"],
+        )
+
+    username = _generate_device_username(device_id)
+    api_key_plain = create_key(DB_PATH, username)
+    key_id, _ = api_key_plain.split(".", 1)
+
+    try:
+        register_device(
+            DB_PATH,
+            device_id=device_id,
+            username=username,
+            key_id=key_id,
+            api_key_plain=api_key_plain,
+            display_name=display_name,
+        )
+    except sqlite3.IntegrityError:
+        existing = get_device(DB_PATH, device_id)
+        if not existing:
+            raise HTTPException(status_code=500, detail="Failed to provision device")
+        if existing.get("disabled"):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Device is disabled")
+        touch_device(DB_PATH, device_id, display_name=display_name)
+        return BootstrapResponse(
+            device_id=device_id,
+            api_key=existing["api_key"],
+            username=existing["username"],
+        )
+
+    return BootstrapResponse(device_id=device_id, api_key=api_key_plain, username=username)
 
 @app.post("/send-email", response_model=EmailResponse, dependencies=[Depends(require_api_key)])
 async def send_email(email_request: EmailRequest, background_tasks: BackgroundTasks, username: str = Depends(require_api_key)):
