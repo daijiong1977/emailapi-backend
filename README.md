@@ -59,6 +59,68 @@ python main.py
 uvicorn main:app --reload --host 0.0.0.0 --port 8002
 ```
 
+## Mail Configuration
+
+### Configuration Storage
+
+The Email API supports two mail providers: **Gmail** and **Amazon SES**. Configuration can be managed through:
+
+1. **mail_config.json** (recommended) - Secure JSON file for mail provider settings
+2. **Environment variables** - Traditional .env file or system environment variables
+3. **Admin UI** - Web-based configuration panel at `/admin/config`
+
+### Using mail_config.json
+
+The `mail_config.json` file provides a secure way to store mail provider credentials and settings. The file is automatically created when you save settings through the admin UI.
+
+**File Location:**
+- Default: `./mail_config.json` (in the application root)
+- Custom: Set `MAIL_CONFIG_PATH` environment variable
+
+**File Structure:**
+```json
+{
+  "mail_provider": "gmail",
+  "mail_from": "noreply@example.com",
+  "gmail_user": "your-email@gmail.com",
+  "gmail_app_password": "your-app-password",
+  "aws_access_key_id": "AKIAIOSFODNN7EXAMPLE",
+  "aws_secret_access_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+  "aws_region": "us-east-1"
+}
+```
+
+**Security:**
+- The file is automatically created with restrictive permissions (mode 0600)
+- Secret values (passwords, AWS secret keys) are NOT displayed in the admin UI
+- The file should be added to `.gitignore` and never committed to version control
+- Consider encrypting the file at rest in production environments
+
+**Configuration Priority:**
+The application loads configuration in the following order (highest to lowest priority):
+1. Environment variables (e.g., `GMAIL_USER`)
+2. `.env` file values
+3. `mail_config.json` values
+
+This allows you to override JSON configuration with environment variables when needed.
+
+### Admin Configuration UI
+
+Access the password-protected admin panel at `https://your-domain.com/admin/config` (default password: `771008`).
+
+The admin UI allows you to:
+- Select mail provider (Gmail or Amazon SES)
+- Configure Gmail SMTP credentials
+- Configure AWS SES credentials
+- Set mail sender address
+- Manage recipient domain policies
+- Create and manage API keys
+
+**Note:** When updating credentials through the admin UI:
+- Secret fields (passwords, secret keys) are not pre-filled for security
+- Leave secret fields blank to keep existing values
+- Only provide new values when you want to update them
+
 ## API Endpoints
 
 ### Send Email

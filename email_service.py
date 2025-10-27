@@ -13,6 +13,13 @@ class EmailService:
         self.smtp_port = config.smtp_port
         self.gmail_user = config.gmail_user
         self.gmail_app_password = config.gmail_app_password
+        # Mail provider configuration (to be set at runtime)
+        self.mail_provider = config.mail_provider
+        self.mail_from = config.mail_from
+        # AWS SES configuration (to be set at runtime)
+        self.aws_access_key_id = config.aws_access_key_id
+        self.aws_secret_access_key = config.aws_secret_access_key
+        self.aws_region = config.aws_region
 
     async def initialize(self):
         """Initialize the email service - setup Gmail credentials if needed"""

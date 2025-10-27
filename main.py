@@ -9,6 +9,7 @@ import string
 from contextlib import asynccontextmanager
 from email_service import EmailService
 from config import Config
+from mail_config_store import load_mail_config, save_mail_config
 from api_keys import (
     init_db,
     verify_key,
@@ -164,15 +165,44 @@ def _save_env_map(values: dict):
 
 def _reload_runtime_from_env():
     global ADMIN_TOKEN, ALLOW_DOMAINS, BLOCK_DOMAINS
-    # Gmail creds
-    config.gmail_user = os.getenv('GMAIL_USER') or _load_env_map().get('GMAIL_USER')
-    config.gmail_app_password = os.getenv('GMAIL_APP_PASSWORD') or _load_env_map().get('GMAIL_APP_PASSWORD')
+    
+    # Load configuration from three sources in order of precedence:
+    # 1. Environment variables (highest priority)
+    # 2. .env file
+    # 3. mail_config.json (lowest priority)
+    env_map = _load_env_map()
+    mail_config = load_mail_config()
+    
+    # Helper to get value with fallback priority: env var -> .env file -> mail_config.json
+    def get_config_value(key: str, default=None):
+        return os.getenv(key) or env_map.get(key) or mail_config.get(key.lower()) or default
+    
+    # Mail provider configuration
+    config.mail_provider = get_config_value('MAIL_PROVIDER', 'gmail')
+    config.mail_from = get_config_value('MAIL_FROM')
+    
+    # Gmail credentials
+    config.gmail_user = get_config_value('GMAIL_USER')
+    config.gmail_app_password = get_config_value('GMAIL_APP_PASSWORD')
+    
+    # AWS SES credentials
+    config.aws_access_key_id = get_config_value('AWS_ACCESS_KEY_ID')
+    config.aws_secret_access_key = get_config_value('AWS_SECRET_ACCESS_KEY')
+    config.aws_region = get_config_value('AWS_REGION')
+    
+    # Update email_service fields
+    email_service.mail_provider = config.mail_provider
+    email_service.mail_from = config.mail_from
     email_service.gmail_user = config.gmail_user
     email_service.gmail_app_password = config.gmail_app_password
+    email_service.aws_access_key_id = config.aws_access_key_id
+    email_service.aws_secret_access_key = config.aws_secret_access_key
+    email_service.aws_region = config.aws_region
+    
     # Policies
-    ADMIN_TOKEN = _load_env_map().get('ADMIN_TOKEN', ADMIN_TOKEN)
-    ALLOW_DOMAINS = [d.strip().lower() for d in (_load_env_map().get('ALLOW_DOMAINS', '')).split(',') if d.strip()]
-    BLOCK_DOMAINS = [d.strip().lower() for d in (_load_env_map().get('BLOCK_DOMAINS', '')).split(',') if d.strip()]
+    ADMIN_TOKEN = get_config_value('ADMIN_TOKEN', ADMIN_TOKEN)
+    ALLOW_DOMAINS = [d.strip().lower() for d in (get_config_value('ALLOW_DOMAINS', '')).split(',') if d.strip()]
+    BLOCK_DOMAINS = [d.strip().lower() for d in (get_config_value('BLOCK_DOMAINS', '')).split(',') if d.strip()]
 
 def _panel_auth(credentials: HTTPBasicCredentials = Depends(basic_security)):
     # Accept any username, check password matches configured panel password
@@ -281,22 +311,51 @@ async def config_status():
 
 def _render_panel(message: str = "") -> str:
     gmail_user = config.gmail_user or ""
+    mail_provider = config.mail_provider or "gmail"
+    mail_from = config.mail_from or ""
+    aws_region = config.aws_region or ""
     allow = ",".join(ALLOW_DOMAINS)
     block = ",".join(BLOCK_DOMAINS)
     keys = list_keys(DB_PATH)
     html = f"""
     <html><head><title>Email API Config</title>
-    <style>body{{font-family:sans-serif;max-width:800px;margin:2rem auto;padding:0 1rem}}form{{border:1px solid #ddd;padding:1rem;margin-bottom:1rem;border-radius:8px}}label{{display:block;margin:.5rem 0 .25rem}}input[type=text],input[type=password],textarea{{width:100%;padding:.5rem}}button{{margin-top:.75rem;padding:.5rem 1rem}}</style>
+    <style>body{{font-family:sans-serif;max-width:800px;margin:2rem auto;padding:0 1rem}}form{{border:1px solid #ddd;padding:1rem;margin-bottom:1rem;border-radius:8px}}label{{display:block;margin:.5rem 0 .25rem}}input[type=text],input[type=password],textarea,select{{width:100%;padding:.5rem}}button{{margin-top:.75rem;padding:.5rem 1rem}}.help-text{{font-size:0.85em;color:#666;margin-top:0.25rem}}</style>
     </head><body>
     <h1>Email API Configuration</h1>
     {f'<p style=\"color:green\">{message}</p>' if message else ''}
-    <h2>Gmail Credentials</h2>
-    <form method="post" action="/admin/config/gmail">
+    
+    <h2>Mail Provider Settings</h2>
+    <form method="post" action="/admin/config/mail">
+      <label>Mail Provider</label>
+      <select name="mail_provider">
+        <option value="gmail" {'selected' if mail_provider == 'gmail' else ''}>Gmail</option>
+        <option value="ses" {'selected' if mail_provider == 'ses' else ''}>Amazon SES</option>
+      </select>
+      
+      <label>Mail From Address</label>
+      <input name="mail_from" type="text" value="{mail_from}" placeholder="noreply@example.com" />
+      <div class="help-text">Email address to use as sender (optional for Gmail)</div>
+      
+      <h3 style="margin-top:1.5rem">Gmail Credentials</h3>
       <label>Gmail Address</label>
-      <input name="gmail_user" type="text" value="{gmail_user}" />
-      <label>App Password (16 chars, no spaces)</label>
+      <input name="gmail_user" type="text" value="{gmail_user}" placeholder="your-email@gmail.com" />
+      <label>Gmail App Password (16 chars, no spaces)</label>
       <input name="gmail_app_password" type="password" value="" placeholder="••••••••••••••••" />
-      <button type="submit">Save Gmail Settings</button>
+      <div class="help-text">Leave blank to keep existing password</div>
+      
+      <h3 style="margin-top:1.5rem">AWS SES Credentials</h3>
+      <label>AWS Access Key ID</label>
+      <input name="aws_access_key_id" type="text" value="" placeholder="AKIAIOSFODNN7EXAMPLE" />
+      <div class="help-text">Leave blank to keep existing key</div>
+      
+      <label>AWS Secret Access Key</label>
+      <input name="aws_secret_access_key" type="password" value="" placeholder="••••••••••••••••••••••••••••••••••••••••" />
+      <div class="help-text">Leave blank to keep existing secret</div>
+      
+      <label>AWS Region</label>
+      <input name="aws_region" type="text" value="{aws_region}" placeholder="us-east-1" />
+      
+      <button type="submit">Save Mail Settings</button>
     </form>
 
     <h2>Recipient Domain Policy</h2>
@@ -352,6 +411,49 @@ def _render_panel(message: str = "") -> str:
 @app.get("/admin/config", response_class=HTMLResponse)
 async def admin_config_panel(_: bool = Depends(_panel_auth)):
     return HTMLResponse(content=_render_panel())
+
+@app.post("/admin/config/mail")
+async def admin_config_mail(
+    mail_provider: str = Form("gmail"),
+    mail_from: str = Form(""),
+    gmail_user: str = Form(""),
+    gmail_app_password: str = Form(""),
+    aws_access_key_id: str = Form(""),
+    aws_secret_access_key: str = Form(""),
+    aws_region: str = Form(""),
+    _: bool = Depends(_panel_auth),
+):
+    """Save mail provider configuration to mail_config.json"""
+    # Load existing config
+    current_config = load_mail_config()
+    
+    # Update only provided values (non-empty)
+    if mail_provider:
+        current_config['mail_provider'] = mail_provider.strip()
+    if mail_from.strip():
+        current_config['mail_from'] = mail_from.strip()
+    
+    # Gmail credentials
+    if gmail_user.strip():
+        current_config['gmail_user'] = gmail_user.strip()
+    if gmail_app_password.strip():
+        current_config['gmail_app_password'] = gmail_app_password.strip().replace(" ", "")
+    
+    # AWS SES credentials
+    if aws_access_key_id.strip():
+        current_config['aws_access_key_id'] = aws_access_key_id.strip()
+    if aws_secret_access_key.strip():
+        current_config['aws_secret_access_key'] = aws_secret_access_key.strip()
+    if aws_region.strip():
+        current_config['aws_region'] = aws_region.strip()
+    
+    # Save to mail_config.json
+    save_mail_config(current_config)
+    
+    # Reload runtime configuration
+    _reload_runtime_from_env()
+    
+    return HTMLResponse(content=_render_panel("Mail settings saved."))
 
 @app.post("/admin/config/gmail")
 async def admin_config_gmail(
