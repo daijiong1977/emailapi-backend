@@ -170,16 +170,25 @@ def _save_env_map(values: dict):
         pass
 
 def _reload_runtime_from_env():
+    """Reload environment variables from .env file."""
     global ADMIN_TOKEN, ALLOW_DOMAINS, BLOCK_DOMAINS
-    # Gmail creds
-    config.gmail_user = os.getenv('GMAIL_USER') or _load_env_map().get('GMAIL_USER')
-    config.gmail_app_password = os.getenv('GMAIL_APP_PASSWORD') or _load_env_map().get('GMAIL_APP_PASSWORD')
-    email_service.gmail_user = config.gmail_user
-    email_service.gmail_app_password = config.gmail_app_password
-    # Policies
-    ADMIN_TOKEN = _load_env_map().get('ADMIN_TOKEN', ADMIN_TOKEN)
-    ALLOW_DOMAINS = [d.strip().lower() for d in (_load_env_map().get('ALLOW_DOMAINS', '')).split(',') if d.strip()]
-    BLOCK_DOMAINS = [d.strip().lower() for d in (_load_env_map().get('BLOCK_DOMAINS', '')).split(',') if d.strip()]
+    
+    # Load current values from .env file
+    env_map = _load_env_map()
+    
+    # Update os.environ with values from .env file
+    for key, value in env_map.items():
+        if value:
+            os.environ[key] = value
+    
+    # Update global config variables
+    config.gmail_user = env_map.get('GMAIL_USER', os.getenv('GMAIL_USER'))
+    config.gmail_app_password = env_map.get('GMAIL_APP_PASSWORD', os.getenv('GMAIL_APP_PASSWORD'))
+    
+    # Update policies
+    ADMIN_TOKEN = env_map.get('ADMIN_TOKEN', ADMIN_TOKEN)
+    ALLOW_DOMAINS = [d.strip().lower() for d in (env_map.get('ALLOW_DOMAINS', '')).split(',') if d.strip()]
+    BLOCK_DOMAINS = [d.strip().lower() for d in (env_map.get('BLOCK_DOMAINS', '')).split(',') if d.strip()]
 
 def _panel_auth(credentials: HTTPBasicCredentials = Depends(basic_security)):
     # Accept any username, check password matches configured panel password
