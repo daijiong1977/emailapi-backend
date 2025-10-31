@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Header, status, Request, Form
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
@@ -242,6 +243,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Email API Service", version="1.0.0", lifespan=lifespan)
 
+# Add CORS middleware to allow cross-origin requests for AI proxy
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow all methods
+    allow_headers=["*"],  # Allow all headers
+)
+
 
 @app.post("/client/bootstrap", response_model=BootstrapResponse)
 async def client_bootstrap(payload: BootstrapRequest):
@@ -385,16 +395,14 @@ async def send_bulk_email(
         results=results
     )
 
-@app.post("/ai/chat", response_model=AIChatResponse, dependencies=[Depends(require_api_key)])
-async def ai_chat(
-    request: AIChatRequest,
-    username: str = Depends(require_api_key)
-):
+@app.post("/ai/chat", response_model=AIChatResponse)
+async def ai_chat(request: AIChatRequest):
     """
-    Proxy AI chat completion requests to configured AI provider.
+    Public AI chat completion proxy endpoint.
     
-    Supports OpenAI, Anthropic, Google AI, and custom endpoints.
-    Hides API keys from clients - all authentication happens server-side.
+    No authentication required - allows any website/app to use the AI proxy.
+    Supports OpenAI, Anthropic, Google AI, DeepSeek, and custom endpoints.
+    API keys are hidden server-side for security.
     """
     # Get enabled provider
     provider = get_enabled_provider()
@@ -898,16 +906,29 @@ def _render_ai_panel(msg: str = ""):
       </form>
     </div>
     
-    <h2>API Usage Example</h2>
-    <p>Use <code>POST /ai/chat</code> with your API key to send requests through the proxy.</p>
-    <pre style="background:#f8f9fa;padding:1rem;border-radius:4px">
+    <h2>Public API Usage</h2>
+    <p><strong>No API key required!</strong> The <code>/ai/chat</code> endpoint is public and can be used from any website or application.</p>
+    
+    <h3>cURL Example:</h3>
+    <pre style="background:#f8f9fa;padding:1rem;border-radius:4px;overflow:auto">
 curl -X POST https://emailapi.6ray.com/ai/chat \\
   -H "Content-Type: application/json" \\
-  -H "X-API-Key: your-api-key" \\
   -d '{{
-    "messages": [{{"role": "user", "content": "Hello!"}}],
-    "model": "gpt-3.5-turbo"
+    "messages": [{{"role": "user", "content": "Hello!"}}]
   }}'
+    </pre>
+    
+    <h3>JavaScript/Fetch Example:</h3>
+    <pre style="background:#f8f9fa;padding:1rem;border-radius:4px;overflow:auto">
+fetch('https://emailapi.6ray.com/ai/chat', {{
+  method: 'POST',
+  headers: {{'Content-Type': 'application/json'}},
+  body: JSON.stringify({{
+    messages: [{{"role": "user", "content": "Hello!"}}]
+  }})
+}})
+.then(res => res.json())
+.then(data => console.log(data.response));
     </pre>
     
     </body></html>
