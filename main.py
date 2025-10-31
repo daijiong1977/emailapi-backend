@@ -862,6 +862,7 @@ def _render_ai_panel(msg: str = ""):
         <option value="openai">OpenAI (GPT-4, GPT-3.5, etc.)</option>
         <option value="anthropic">Anthropic (Claude)</option>
         <option value="google">Google AI (Gemini)</option>
+        <option value="deepseek">DeepSeek (DeepSeek-V3)</option>
         <option value="custom">Custom (OpenAI-compatible)</option>
       </select>
       
@@ -959,22 +960,40 @@ async def ai_admin_test_proxy(_: bool = Depends(_panel_auth)):
             return HTMLResponse(content=_render_ai_panel("❌ No AI provider enabled. Please enable a provider first."))
         
         # Initialize AI proxy
-        ai_proxy = AIProxyService()
+        test_proxy = AIProxyService()
         
         # Send test message
-        response = await ai_proxy.chat_completion(
-            provider=provider,
+        response = await test_proxy.chat_completion(
+            provider_type=provider["provider_type"],
+            api_key=provider["api_key"],
             messages=[{"role": "user", "content": "Hello, what day is today?"}],
             model=None,  # Use default model
+            base_url=provider.get("base_url"),
             temperature=None,
             max_tokens=None
         )
         
-        msg = f"✅ Test successful using provider '{provider['name']}'!<br><br><strong>Response:</strong><br>{response.get('content', 'No content')}"
+        # Extract content from response based on provider format
+        content = ""
+        if "choices" in response:  # OpenAI/DeepSeek format
+            content = response["choices"][0]["message"]["content"]
+        elif "content" in response:  # Anthropic format
+            if isinstance(response["content"], list):
+                content = response["content"][0].get("text", str(response["content"]))
+            else:
+                content = response["content"]
+        elif "candidates" in response:  # Google format
+            content = response["candidates"][0]["content"]["parts"][0]["text"]
+        else:
+            content = str(response)
+        
+        msg = f"✅ Test successful using provider '{provider['name']}' ({provider['provider_type']})!<br><br><strong>Response:</strong><br><pre style='background:#f8f9fa;padding:1rem;border-radius:4px;white-space:pre-wrap'>{content}</pre>"
         return HTMLResponse(content=_render_ai_panel(msg))
         
     except Exception as e:
-        return HTMLResponse(content=_render_ai_panel(f"❌ Test failed: {str(e)}"))
+        import traceback
+        error_detail = f"{str(e)}<br><br><pre style='font-size:0.85em'>{traceback.format_exc()}</pre>"
+        return HTMLResponse(content=_render_ai_panel(f"❌ Test failed: {error_detail}"))
 
 # --- Admin endpoints ---
 class CreateKeyRequest(BaseModel):

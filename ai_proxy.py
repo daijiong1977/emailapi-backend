@@ -27,6 +27,7 @@ class AIProxyService:
         - OpenAI (gpt-4, gpt-3.5-turbo, etc.)
         - Anthropic (claude-3, claude-2, etc.)
         - Google AI (gemini-pro, etc.)
+        - DeepSeek (deepseek-chat, deepseek-reasoner)
         - Custom endpoints
         """
         provider_type = provider_type.lower()
@@ -37,6 +38,8 @@ class AIProxyService:
             return await self._anthropic_chat(api_key, messages, model, **kwargs)
         elif provider_type == 'google':
             return await self._google_chat(api_key, messages, model, **kwargs)
+        elif provider_type == 'deepseek':
+            return await self._deepseek_chat(api_key, messages, model, **kwargs)
         elif provider_type == 'custom':
             return await self._custom_chat(api_key, messages, model, base_url, **kwargs)
         else:
@@ -126,6 +129,33 @@ class AIProxyService:
         
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(url, json=payload)
+            response.raise_for_status()
+            return response.json()
+    
+    async def _deepseek_chat(
+        self,
+        api_key: str,
+        messages: list,
+        model: Optional[str],
+        **kwargs
+    ) -> Dict[str, Any]:
+        """DeepSeek chat completion (OpenAI-compatible)."""
+        url = "https://api.deepseek.com/chat/completions"
+        model = model or "deepseek-chat"
+        
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "model": model,
+            "messages": messages,
+            **kwargs
+        }
+        
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
             return response.json()
     
