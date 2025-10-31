@@ -102,6 +102,8 @@ ALLOW_DOMAINS = [d.strip().lower() for d in os.getenv("ALLOW_DOMAINS", "").split
 BLOCK_DOMAINS = [d.strip().lower() for d in os.getenv("BLOCK_DOMAINS", "").split(",") if d.strip()]
 PANEL_PASSWORD = os.getenv("PANEL_PASSWORD", "771008")
 ENV_FILE_PATH = os.getenv("ENV_FILE_PATH", ".env")
+# CORS settings for AI proxy - comma-separated origins, or "*" for all
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
 
 basic_security = HTTPBasic()
 
@@ -244,9 +246,13 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Email API Service", version="1.0.0", lifespan=lifespan)
 
 # Add CORS middleware to allow cross-origin requests for AI proxy
+# Configure via CORS_ORIGINS environment variable (comma-separated origins or "*" for all)
+cors_origins = CORS_ORIGINS.split(",") if CORS_ORIGINS != "*" else ["*"]
+cors_origins = [origin.strip() for origin in cors_origins if origin.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins
+    allow_origins=cors_origins,  # Configurable origins from environment
     allow_credentials=True,
     allow_methods=["*"],  # Allow all methods
     allow_headers=["*"],  # Allow all headers
@@ -470,6 +476,7 @@ def _render_panel(message: str = "") -> str:
     aws_access_key = env_vars.get('AWS_ACCESS_KEY_ID', '')
     ses_from_email = env_vars.get('SES_FROM_EMAIL', '')
     ses_config_set = env_vars.get('SES_CONFIGURATION_SET', '')
+    cors_origins = env_vars.get('CORS_ORIGINS', '*')
     
     allow = ",".join(ALLOW_DOMAINS)
     block = ",".join(BLOCK_DOMAINS)
@@ -583,6 +590,18 @@ def _render_panel(message: str = "") -> str:
       <label>Block Domains (comma-separated)</label>
       <input name="block_domains" type="text" value="{block}" />
       <button type="submit">Save Domain Policy</button>
+    </form>
+
+    <h2>AI Proxy CORS Settings</h2>
+    <form method="post" action="/admin/config/cors">
+      <label>Allowed Origins (comma-separated URLs, or "*" for all)</label>
+      <input name="cors_origins" type="text" value="{cors_origins}" placeholder="https://example.com,https://app.example.com" />
+      <div class="help-text">
+        Control which websites can access your AI proxy API. Use "*" to allow all origins, 
+        or specify comma-separated URLs (e.g., https://example.com,https://app.example.com).
+        <br><strong>Note:</strong> Service restart required for changes to take effect.
+      </div>
+      <button type="submit">Save CORS Settings</button>
     </form>
 
         <h2>Create iOS Client API Key</h2>
@@ -777,6 +796,23 @@ async def admin_config_domains(
     _reload_runtime_from_env()
     return HTMLResponse(content=_render_panel("Domain policy saved."))
 
+@app.post("/admin/config/cors")
+async def admin_config_cors(
+    cors_origins: str = Form("*"),
+    _: bool = Depends(_panel_auth),
+):
+    """Configure CORS allowed origins for AI proxy endpoint."""
+    origins = cors_origins.strip()
+    if not origins:
+        origins = "*"
+    
+    _save_env_map({"CORS_ORIGINS": origins})
+    _reload_runtime_from_env()
+    return HTMLResponse(content=_render_panel(
+        "⚠️ CORS settings saved. <strong>Service restart required</strong> for changes to take effect. "
+        "Use: <code>sudo systemctl restart emailapi</code>"
+    ))
+
 @app.post("/admin/config/create-key")
 async def admin_config_create_key(username: str = Form(...), _: bool = Depends(_panel_auth)):
     key = create_key(DB_PATH, username.strip())
@@ -901,7 +937,7 @@ def _render_ai_panel(msg: str = ""):
     <h2>Test AI Proxy</h2>
     <div style="background: #f8f9fa; padding: 15px; border-radius: 6px; margin-bottom: 20px;">
       <form method="post" action="/admin/aiconfig/test">
-        <div class="help-text">Send test message "Hello, what day is today?" through the AI proxy</div>
+        <div class="help-text">Send test message "5+7 is what?" through the AI proxy</div>
         <button type="submit" style="background: #28a745;">Test AI Proxy</button>
       </form>
     </div>
@@ -987,7 +1023,7 @@ async def ai_admin_test_proxy(_: bool = Depends(_panel_auth)):
         response = await test_proxy.chat_completion(
             provider_type=provider["provider_type"],
             api_key=provider["api_key"],
-            messages=[{"role": "user", "content": "Hello, what day is today?"}],
+            messages=[{"role": "user", "content": "5+7 is what?"}],
             model=None,  # Use default model
             base_url=provider.get("base_url"),
             temperature=None,
