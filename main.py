@@ -270,34 +270,116 @@ async def health_check():
 
 @app.get("/config/status")
 async def config_status():
-    """Check if Gmail configuration is set up"""
-    is_configured = config.is_gmail_configured()
+    """Check email provider configuration status"""
+    provider_name = email_service.get_provider_name()
+    is_configured = email_service.provider.is_configured()
     return {
-        "gmail_configured": is_configured,
-        "message": "Gmail is configured and ready" if is_configured else "Gmail configuration needed"
+        "email_provider": provider_name,
+        "configured": is_configured,
+        "message": f"{provider_name} is configured and ready" if is_configured else f"{provider_name} configuration needed"
     }
 
 # --- Admin Config Panel (password protected) ---
 
 def _render_panel(message: str = "") -> str:
-    gmail_user = config.gmail_user or ""
+    # Load current configuration
+    env_vars = _load_env_map()
+    email_provider = env_vars.get('EMAIL_PROVIDER', 'gmail')
+    gmail_user = env_vars.get('GMAIL_USER', '')
+    aws_region = env_vars.get('AWS_REGION', 'us-east-1')
+    aws_access_key = env_vars.get('AWS_ACCESS_KEY_ID', '')
+    ses_from_email = env_vars.get('SES_FROM_EMAIL', '')
+    ses_config_set = env_vars.get('SES_CONFIGURATION_SET', '')
+    
     allow = ",".join(ALLOW_DOMAINS)
     block = ",".join(BLOCK_DOMAINS)
     keys = list_keys(DB_PATH)
+    
+    # Provider selection dropdown
+    provider_options = f"""
+        <option value="gmail" {'selected' if email_provider == 'gmail' else ''}>Gmail SMTP</option>
+        <option value="ses" {'selected' if email_provider == 'ses' else ''}>Amazon SES</option>
+    """
+    
     html = f"""
     <html><head><title>Email API Config</title>
-    <style>body{{font-family:sans-serif;max-width:800px;margin:2rem auto;padding:0 1rem}}form{{border:1px solid #ddd;padding:1rem;margin-bottom:1rem;border-radius:8px}}label{{display:block;margin:.5rem 0 .25rem}}input[type=text],input[type=password],textarea{{width:100%;padding:.5rem}}button{{margin-top:.75rem;padding:.5rem 1rem}}</style>
+    <style>
+    body{{font-family:sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem}}
+    form{{border:1px solid #ddd;padding:1rem;margin-bottom:1rem;border-radius:8px}}
+    label{{display:block;margin:.5rem 0 .25rem;font-weight:bold}}
+    input[type=text],input[type=password],textarea,select{{width:100%;padding:.5rem;box-sizing:border-box}}
+    button{{margin-top:.75rem;padding:.5rem 1rem;cursor:pointer}}
+    .provider-section{{display:none}}
+    .provider-section.active{{display:block}}
+    .help-text{{font-size:0.9em;color:#666;margin-top:0.25rem}}
+    </style>
+    <script>
+    function toggleProvider() {{
+        var provider = document.getElementById('email_provider').value;
+        document.getElementById('gmail-section').classList.remove('active');
+        document.getElementById('ses-section').classList.remove('active');
+        if (provider === 'gmail') {{
+            document.getElementById('gmail-section').classList.add('active');
+        }} else if (provider === 'ses') {{
+            document.getElementById('ses-section').classList.add('active');
+        }}
+    }}
+    window.onload = function() {{ toggleProvider(); }}
+    </script>
     </head><body>
     <h1>Email API Configuration</h1>
-    {f'<p style=\"color:green\">{message}</p>' if message else ''}
-    <h2>Gmail Credentials</h2>
-    <form method="post" action="/admin/config/gmail">
-      <label>Gmail Address</label>
-      <input name="gmail_user" type="text" value="{gmail_user}" />
-      <label>App Password (16 chars, no spaces)</label>
-      <input name="gmail_app_password" type="password" value="" placeholder="••••••••••••••••" />
-      <button type="submit">Save Gmail Settings</button>
+    {f'<p style=\"color:green;font-weight:bold\">{message}</p>' if message else ''}
+    
+    <h2>Email Provider Selection</h2>
+    <form method="post" action="/admin/config/provider">
+      <label>Email Provider</label>
+      <select name="email_provider" id="email_provider" onchange="toggleProvider()">
+        {provider_options}
+      </select>
+      <div class="help-text">Choose between Gmail SMTP or Amazon SES for sending emails</div>
+      <button type="submit">Save Provider Selection</button>
     </form>
+    
+    <div id="gmail-section" class="provider-section">
+      <h2>Gmail SMTP Configuration</h2>
+      <form method="post" action="/admin/config/gmail">
+        <label>Gmail Address</label>
+        <input name="gmail_user" type="text" value="{gmail_user}" placeholder="your-email@gmail.com" />
+        <div class="help-text">Your Gmail address to send emails from</div>
+        
+        <label>App Password (16 chars, no spaces)</label>
+        <input name="gmail_app_password" type="password" value="" placeholder="••••••••••••••••" />
+        <div class="help-text">Generate at: <a href="https://myaccount.google.com/apppasswords" target="_blank">Google App Passwords</a></div>
+        <button type="submit">Save Gmail Settings</button>
+      </form>
+    </div>
+    
+    <div id="ses-section" class="provider-section">
+      <h2>Amazon SES Configuration</h2>
+      <form method="post" action="/admin/config/ses">
+        <label>AWS Region</label>
+        <input name="aws_region" type="text" value="{aws_region}" placeholder="us-east-1" />
+        <div class="help-text">AWS region where your SES is configured (e.g., us-east-1, eu-west-1)</div>
+        
+        <label>AWS Access Key ID</label>
+        <input name="aws_access_key_id" type="text" value="{aws_access_key}" placeholder="AKIAIOSFODNN7EXAMPLE" />
+        <div class="help-text">IAM user access key with ses:SendEmail permission</div>
+        
+        <label>AWS Secret Access Key</label>
+        <input name="aws_secret_access_key" type="password" value="" placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" />
+        <div class="help-text">IAM user secret key (will not be displayed after saving)</div>
+        
+        <label>SES From Email</label>
+        <input name="ses_from_email" type="text" value="{ses_from_email}" placeholder="noreply@yourdomain.com" />
+        <div class="help-text">Verified sender email address in SES</div>
+        
+        <label>SES Configuration Set (Optional)</label>
+        <input name="ses_configuration_set" type="text" value="{ses_config_set}" placeholder="my-config-set" />
+        <div class="help-text">Optional: SES configuration set for tracking</div>
+        
+        <button type="submit">Save Amazon SES Settings</button>
+      </form>
+    </div>
 
     <h2>Recipient Domain Policy</h2>
     <form method="post" action="/admin/config/domains">
@@ -364,7 +446,41 @@ async def admin_config_gmail(
         updates["GMAIL_APP_PASSWORD"] = gmail_app_password.strip().replace(" ", "")
     _save_env_map(updates)
     _reload_runtime_from_env()
-    return HTMLResponse(content=_render_panel("Gmail settings saved."))
+    return HTMLResponse(content=_render_panel("Gmail settings saved. Restart service to apply changes."))
+
+@app.post("/admin/config/provider")
+async def admin_config_provider(
+    email_provider: str = Form(...),
+    _: bool = Depends(_panel_auth),
+):
+    provider = email_provider.strip().lower()
+    if provider not in ['gmail', 'ses']:
+        return HTMLResponse(content=_render_panel(f"Invalid provider: {provider}"))
+    _save_env_map({"EMAIL_PROVIDER": provider})
+    _reload_runtime_from_env()
+    return HTMLResponse(content=_render_panel(f"Email provider set to {provider.upper()}. Restart service to apply changes."))
+
+@app.post("/admin/config/ses")
+async def admin_config_ses(
+    aws_region: str = Form(...),
+    aws_access_key_id: str = Form(...),
+    aws_secret_access_key: str = Form(""),
+    ses_from_email: str = Form(...),
+    ses_configuration_set: str = Form(""),
+    _: bool = Depends(_panel_auth),
+):
+    updates = {
+        "AWS_REGION": aws_region.strip(),
+        "AWS_ACCESS_KEY_ID": aws_access_key_id.strip(),
+        "SES_FROM_EMAIL": ses_from_email.strip(),
+    }
+    if aws_secret_access_key.strip():
+        updates["AWS_SECRET_ACCESS_KEY"] = aws_secret_access_key.strip()
+    if ses_configuration_set.strip():
+        updates["SES_CONFIGURATION_SET"] = ses_configuration_set.strip()
+    _save_env_map(updates)
+    _reload_runtime_from_env()
+    return HTMLResponse(content=_render_panel("Amazon SES settings saved. Restart service to apply changes."))
 
 @app.post("/admin/config/domains")
 async def admin_config_domains(
