@@ -889,7 +889,15 @@ def _render_ai_panel(msg: str = ""):
       {provider_rows or '<tr><td colspan="6">No providers configured</td></tr>'}
     </table>
     
-    <h2>Test AI Endpoint</h2>
+    <h2>Test AI Proxy</h2>
+    <div style="background: #f8f9fa; padding: 15px; border-radius: 6px; margin-bottom: 20px;">
+      <form method="post" action="/admin/aiconfig/test">
+        <div class="help-text">Send test message "Hello, what day is today?" through the AI proxy</div>
+        <button type="submit" style="background: #28a745;">Test AI Proxy</button>
+      </form>
+    </div>
+    
+    <h2>API Usage Example</h2>
     <p>Use <code>POST /ai/chat</code> with your API key to send requests through the proxy.</p>
     <pre style="background:#f8f9fa;padding:1rem;border-radius:4px">
 curl -X POST https://emailapi.6ray.com/ai/chat \\
@@ -940,6 +948,33 @@ async def ai_admin_delete_provider(name: str, _: bool = Depends(_panel_auth)):
     success = delete_provider(name)
     msg = f"Provider '{name}' deleted" if success else "Failed to delete provider"
     return HTMLResponse(content=_render_ai_panel(msg))
+
+@app.post("/admin/aiconfig/test")
+async def ai_admin_test_proxy(_: bool = Depends(_panel_auth)):
+    """Test the AI proxy with a simple message."""
+    try:
+        # Get enabled provider
+        provider = get_enabled_provider()
+        if not provider:
+            return HTMLResponse(content=_render_ai_panel("❌ No AI provider enabled. Please enable a provider first."))
+        
+        # Initialize AI proxy
+        ai_proxy = AIProxyService()
+        
+        # Send test message
+        response = await ai_proxy.chat_completion(
+            provider=provider,
+            messages=[{"role": "user", "content": "Hello, what day is today?"}],
+            model=None,  # Use default model
+            temperature=None,
+            max_tokens=None
+        )
+        
+        msg = f"✅ Test successful using provider '{provider['name']}'!<br><br><strong>Response:</strong><br>{response.get('content', 'No content')}"
+        return HTMLResponse(content=_render_ai_panel(msg))
+        
+    except Exception as e:
+        return HTMLResponse(content=_render_ai_panel(f"❌ Test failed: {str(e)}"))
 
 # --- Admin endpoints ---
 class CreateKeyRequest(BaseModel):
