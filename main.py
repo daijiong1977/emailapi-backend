@@ -517,7 +517,7 @@ async def admin_config_test_email(
         success = await email_service.send_email(
             to_email=test_email.strip(),
             subject="Email API Test - Configuration Successful",
-            html_content=f"""
+            message=f"""
             <html>
             <body style="font-family: Arial, sans-serif; padding: 20px;">
                 <h2>✅ Email Configuration Test Successful</h2>
