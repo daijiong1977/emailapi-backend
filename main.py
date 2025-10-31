@@ -382,13 +382,20 @@ def _render_panel(message: str = "") -> str:
       </form>
     </div>
 
-    <h2>Test Email Connection</h2>
-    <form method="post" action="/admin/config/test-email">
-      <label>Test Email Recipient</label>
-      <input name="test_email" type="email" placeholder="your@email.com" required />
-      <div class="help-text">Send a test email to verify your email provider configuration</div>
-      <button type="submit">Send Test Email</button>
-    </form>
+    <h2>Test Email Configuration</h2>
+    <div style="background: #f8f9fa; padding: 15px; border-radius: 6px; margin-bottom: 20px;">
+      <form method="post" action="/admin/config/test-connection" style="margin-bottom: 15px;">
+        <div class="help-text">Test if your email provider credentials are valid and the service is reachable</div>
+        <button type="submit" style="background: #0066cc;">Test Connection</button>
+      </form>
+      
+      <form method="post" action="/admin/config/test-email">
+        <label>Test Email Recipient</label>
+        <input name="test_email" type="email" placeholder="your@email.com" required />
+        <div class="help-text">Send a test email to verify end-to-end email delivery</div>
+        <button type="submit" style="background: #28a745;">Send Test Email</button>
+      </form>
+    </div>
 
     <h2>Recipient Domain Policy</h2>
     <form method="post" action="/admin/config/domains">
@@ -497,6 +504,14 @@ async def admin_config_test_email(
     _: bool = Depends(_panel_auth),
 ):
     """Send a test email to verify email provider configuration"""
+    provider_name = email_service.get_provider_name()
+    
+    # First check if provider is configured
+    if not email_service.provider.is_configured():
+        return HTMLResponse(content=_render_panel(
+            f"❌ {provider_name} is not configured. Please configure your email provider settings first."
+        ))
+    
     try:
         # Try to send test email
         success = await email_service.send_email(
@@ -508,7 +523,7 @@ async def admin_config_test_email(
                 <h2>✅ Email Configuration Test Successful</h2>
                 <p>This is a test email from your Email API service.</p>
                 <hr>
-                <p><strong>Provider:</strong> {email_service.get_provider_name()}</p>
+                <p><strong>Provider:</strong> {provider_name}</p>
                 <p><strong>Test Time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
                 <p><strong>Server:</strong> emailapi.6ray.com</p>
                 <hr>
@@ -523,14 +538,48 @@ async def admin_config_test_email(
         
         if success:
             return HTMLResponse(content=_render_panel(
-                f"✅ Test email sent successfully to {test_email} using {email_service.get_provider_name()}. Check your inbox!"
+                f"✅ Test email sent successfully to {test_email} using {provider_name}. Check your inbox (and spam folder)!"
             ))
         else:
             return HTMLResponse(content=_render_panel(
-                f"❌ Failed to send test email. Check your {email_service.get_provider_name()} configuration and server logs."
+                f"❌ Failed to send test email using {provider_name}. The send operation returned False. Check server logs for details."
             ))
     except Exception as e:
-        return HTMLResponse(content=_render_panel(f"❌ Error sending test email: {str(e)}"))
+        error_details = str(e)
+        return HTMLResponse(content=_render_panel(
+            f"❌ Error sending test email via {provider_name}: {error_details}"
+        ))
+
+@app.post("/admin/config/test-connection")
+async def admin_config_test_connection(
+    _: bool = Depends(_panel_auth),
+):
+    """Test connection to email provider without sending email"""
+    provider_name = email_service.get_provider_name()
+    
+    # Check if configured
+    if not email_service.provider.is_configured():
+        return HTMLResponse(content=_render_panel(
+            f"❌ {provider_name} is not configured. Please set up your credentials first."
+        ))
+    
+    try:
+        # Test connection
+        connection_ok = await email_service.provider.test_connection()
+        
+        if connection_ok:
+            return HTMLResponse(content=_render_panel(
+                f"✅ Connection successful! {provider_name} is properly configured and reachable."
+            ))
+        else:
+            return HTMLResponse(content=_render_panel(
+                f"❌ Connection test failed for {provider_name}. Check your credentials and network connectivity."
+            ))
+    except Exception as e:
+        error_details = str(e)
+        return HTMLResponse(content=_render_panel(
+            f"❌ Connection error with {provider_name}: {error_details}"
+        ))
 
 @app.post("/admin/config/domains")
 async def admin_config_domains(
