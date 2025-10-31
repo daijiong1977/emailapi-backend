@@ -848,10 +848,26 @@ async def admin_config_cors(
     
     _save_env_map({"CORS_ORIGINS": origins})
     _reload_runtime_from_env()
-    return HTMLResponse(content=_render_panel(
-        "⚠️ CORS settings saved. <strong>Service restart required</strong> for changes to take effect. "
-        "Use: <code>sudo systemctl restart emailapi</code>"
-    ))
+    
+    # Attempt to restart the service automatically
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["systemctl", "restart", "emailapi"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0:
+            msg = f"✅ CORS settings saved and service restarted successfully! New origins: <code>{origins}</code>"
+        else:
+            msg = f"⚠️ CORS settings saved but restart failed: {result.stderr}. Manual restart required: <code>sudo systemctl restart emailapi</code>"
+    except subprocess.TimeoutExpired:
+        msg = "⚠️ CORS settings saved but restart timed out. Manual restart may be required."
+    except Exception as e:
+        msg = f"⚠️ CORS settings saved but auto-restart failed: {str(e)}. Manual restart required: <code>sudo systemctl restart emailapi</code>"
+    
+    return HTMLResponse(content=_render_panel(msg))
 
 @app.post("/admin/config/create-key")
 async def admin_config_create_key(username: str = Form(...), _: bool = Depends(_panel_auth)):
@@ -1080,10 +1096,26 @@ async def ai_admin_config_cors(
     
     _save_env_map({"CORS_ORIGINS": origins})
     _reload_runtime_from_env()
-    return HTMLResponse(content=_render_ai_panel(
-        "⚠️ CORS settings saved. <strong>Service restart required</strong> for changes to take effect. "
-        "SSH to server and run: <code>sudo systemctl restart emailapi</code>"
-    ))
+    
+    # Attempt to restart the service automatically
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["systemctl", "restart", "emailapi"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0:
+            msg = f"✅ CORS settings saved and service restarted successfully! New origins: <code>{origins}</code>"
+        else:
+            msg = f"⚠️ CORS settings saved but restart failed: {result.stderr}. Manual restart required: <code>sudo systemctl restart emailapi</code>"
+    except subprocess.TimeoutExpired:
+        msg = "⚠️ CORS settings saved but restart timed out. Manual restart may be required."
+    except Exception as e:
+        msg = f"⚠️ CORS settings saved but auto-restart failed: {str(e)}. Manual restart required: <code>sudo systemctl restart emailapi</code>"
+    
+    return HTMLResponse(content=_render_ai_panel(msg))
 
 @app.post("/admin/aiconfig/test")
 async def ai_admin_test_proxy(_: bool = Depends(_panel_auth)):
