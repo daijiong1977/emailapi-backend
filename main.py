@@ -26,6 +26,12 @@ from api_keys import (
 email_service = EmailService()
 config = Config()
 
+async def _reinitialize_email_service():
+    """Reinitialize email service with current configuration."""
+    global email_service
+    email_service = EmailService()
+    await email_service.initialize()
+
 class EmailRequest(BaseModel):
     to_email: EmailStr
     subject: str
@@ -462,7 +468,8 @@ async def admin_config_gmail(
         updates["GMAIL_APP_PASSWORD"] = gmail_app_password.strip().replace(" ", "")
     _save_env_map(updates)
     _reload_runtime_from_env()
-    return HTMLResponse(content=_render_panel("Gmail settings saved. Restart service to apply changes."))
+    await _reinitialize_email_service()
+    return HTMLResponse(content=_render_panel("Gmail settings saved and email service reloaded successfully!"))
 
 @app.post("/admin/config/provider")
 async def admin_config_provider(
@@ -474,7 +481,8 @@ async def admin_config_provider(
         return HTMLResponse(content=_render_panel(f"Invalid provider: {provider}"))
     _save_env_map({"EMAIL_PROVIDER": provider})
     _reload_runtime_from_env()
-    return HTMLResponse(content=_render_panel(f"Email provider set to {provider.upper()}. Restart service to apply changes."))
+    await _reinitialize_email_service()
+    return HTMLResponse(content=_render_panel(f"Email provider switched to {provider.upper()} successfully!"))
 
 @app.post("/admin/config/ses")
 async def admin_config_ses(
@@ -496,7 +504,8 @@ async def admin_config_ses(
         updates["SES_CONFIGURATION_SET"] = ses_configuration_set.strip()
     _save_env_map(updates)
     _reload_runtime_from_env()
-    return HTMLResponse(content=_render_panel("Amazon SES settings saved. Restart service to apply changes."))
+    await _reinitialize_email_service()
+    return HTMLResponse(content=_render_panel("Amazon SES settings saved and email service reloaded successfully!"))
 
 @app.post("/admin/config/test-email")
 async def admin_config_test_email(
