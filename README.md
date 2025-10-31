@@ -111,6 +111,8 @@ Content-Type: application/json
 
 The endpoint is idempotent: the same `device_id` receives the same API key on subsequent calls. If a device is disabled by an administrator the route returns HTTP 403.
 
+> Prerequisites: set `DEVICE_KEY_SECRET` (recommended) or `ADMIN_TOKEN` in your `.env` so the server can encrypt the issued keys at rest.
+
 ### Health Check
 ```http
 GET /health
@@ -184,6 +186,22 @@ sudo systemctl restart emailapi
   ```bash
   sudo bash /opt/emailapi/deploy/uninstall-emailapi.sh
   ```
+
+### Restarting the service
+
+After updating code or configuration, restart the daemon and confirm it comes back clean:
+
+```bash
+sudo systemctl restart emailapi
+sudo systemctl status emailapi
+sudo journalctl -u emailapi -n 50 --no-pager
+```
+
+If new Python dependencies were added (for example `cryptography` for `/client/bootstrap`), refresh the virtualenv first:
+
+```bash
+sudo -u emailapi /opt/emailapi/venv/bin/pip install -r /opt/emailapi/requirements.txt
+```
 
 ### Gmail configuration helper
 
@@ -362,6 +380,41 @@ func sendEmail(request: EmailRequest) async throws -> Bool {
 - 🔒 Use HTTPS in production (consider SSL termination)
 - 📝 Implement rate limiting for API endpoints
 - 👤 Validate email addresses and sanitize input
+
+## Smoke Testing from macOS
+
+The repo includes `ios_smoke_test.py` to exercise the live service from a workstation.
+
+1. **Provision a client key (idempotent)**
+
+  ```bash
+  curl -s -X POST https://emailapi.6ray.com/client/bootstrap \
+      -H "Content-Type: application/json" \
+      -d '{"device_id":"mac-smoke-000001","display_name":"Mac Smoke"}' \
+    | python -m json.tool
+  ```
+
+  Save the returned `api_key` (format `key_id.secret`). A later call with the same `device_id` returns the same key.
+
+2. **Run the smoke script**
+
+  ```bash
+   python ios_smoke_test.py \
+     --base-url https://emailapi.6ray.com \
+     --api-key <key_id.secret-from-bootstrap> \
+    --to-email dd@6ray.com \
+    --from-name "Mac Smoke" \
+    --subject "Bootstrap smoke" \
+    --message "Automated smoke test from mac"
+  ```
+
+  The script checks `/health`, `/config/status`, and queues a test email via `/send-email`.
+
+Tips:
+
+- Omit `--api-key` and add `--bootstrap` to let the script call `/client/bootstrap` automatically (stores the key in `~/.email_api_bootstrap.json` by default).
+- Set environment variables (`EMAIL_API_BASE_URL`, `EMAIL_API_KEY`, etc.) to avoid passing secrets directly on the command line.
+- Rotate the bootstrap key in the admin UI if you no longer need it.
 
 ## Troubleshooting
 
