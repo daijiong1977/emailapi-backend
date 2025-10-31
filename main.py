@@ -247,16 +247,53 @@ app = FastAPI(title="Email API Service", version="1.0.0", lifespan=lifespan)
 
 # Add CORS middleware to allow cross-origin requests for AI proxy
 # Configure via CORS_ORIGINS environment variable (comma-separated origins or "*" for all)
-cors_origins = CORS_ORIGINS.split(",") if CORS_ORIGINS != "*" else ["*"]
-cors_origins = [origin.strip() for origin in cors_origins if origin.strip()]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=cors_origins,  # Configurable origins from environment
-    allow_credentials=True,
-    allow_methods=["*"],  # Allow all methods
-    allow_headers=["*"],  # Allow all headers
-)
+# Supports wildcard subdomains like *.6ray.com
+if CORS_ORIGINS == "*":
+    cors_origins = ["*"]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    # Parse origins and support wildcard patterns
+    cors_list = [origin.strip() for origin in CORS_ORIGINS.split(",") if origin.strip()]
+    
+    # Check if any wildcard patterns exist
+    has_wildcards = any("*" in origin for origin in cors_list)
+    
+    if has_wildcards:
+        # Use regex patterns for wildcard support
+        import re
+        cors_patterns = []
+        for origin in cors_list:
+            if "*" in origin:
+                # Convert wildcard pattern to regex
+                pattern = origin.replace(".", r"\.").replace("*", r"[^/]+")
+                cors_patterns.append(f"^{pattern}$")
+            else:
+                # Escape non-wildcard origins
+                cors_patterns.append(re.escape(origin))
+        
+        # Use allow_origin_regex for wildcard support
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origin_regex="|".join(cors_patterns),
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+    else:
+        # Use simple origins list
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=cors_list,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
 
 @app.post("/client/bootstrap", response_model=BootstrapResponse)
@@ -595,11 +632,14 @@ def _render_panel(message: str = "") -> str:
     <h2>AI Proxy CORS Settings</h2>
     <form method="post" action="/admin/config/cors">
       <label>Allowed Origins (comma-separated URLs, or "*" for all)</label>
-      <input name="cors_origins" type="text" value="{cors_origins}" placeholder="https://example.com,https://app.example.com" />
+      <input name="cors_origins" type="text" value="{cors_origins}" placeholder="https://6ray.com,https://*.6ray.com,http://localhost:3000" />
       <div class="help-text">
-        Control which websites can access your AI proxy API. Use "*" to allow all origins, 
-        or specify comma-separated URLs (e.g., https://example.com,https://app.example.com).
-        <br><strong>Note:</strong> Service restart required for changes to take effect.
+        Control which websites can access your AI proxy API.<br>
+        • Use <strong>*</strong> to allow all origins<br>
+        • Wildcard subdomains supported: <strong>https://*.6ray.com</strong> (matches api.6ray.com, app.6ray.com, etc.)<br>
+        • Multiple origins: <strong>https://6ray.com,https://*.6ray.com,http://localhost:3000</strong><br>
+        • Local testing: <strong>http://localhost:3000,http://127.0.0.1:3000</strong><br>
+        <br><strong>⚠️ Note:</strong> Service restart required for changes to take effect.
       </div>
       <button type="submit">Save CORS Settings</button>
     </form>
