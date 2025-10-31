@@ -891,6 +891,10 @@ def _render_ai_panel(msg: str = ""):
     """Render AI provider configuration panel."""
     providers = list_ai_providers(include_keys=False)
     
+    # Load CORS configuration
+    env_vars = _load_env_map()
+    cors_origins = env_vars.get('CORS_ORIGINS', '*')
+    
     provider_rows = ""
     for p in providers:
         enabled_badge = "✅ ENABLED" if p["enabled"] else "⚪"
@@ -974,6 +978,20 @@ def _render_ai_panel(msg: str = ""):
       {provider_rows or '<tr><td colspan="6">No providers configured</td></tr>'}
     </table>
     
+    <h2>CORS Settings</h2>
+    <form method="post" action="/admin/aiconfig/cors">
+      <label>Allowed Origins (comma-separated URLs, or "*" for all)</label>
+      <input name="cors_origins" type="text" value="{cors_origins}" placeholder="https://6ray.com,https://*.6ray.com,http://localhost:3000" style="width:100%;padding:0.5rem;box-sizing:border-box" />
+      <div class="help-text">
+        Control which websites can access your AI proxy API.<br>
+        • Use <strong>*</strong> to allow all origins (current: {cors_origins})<br>
+        • Wildcard subdomains: <strong>https://*.6ray.com</strong> matches all subdomains<br>
+        • Multiple origins: <strong>https://6ray.com,https://*.6ray.com,http://localhost:3000</strong><br>
+        <br><strong>⚠️ Note:</strong> Service restart required for changes to take effect.
+      </div>
+      <button type="submit">Save CORS Settings</button>
+    </form>
+    
     <h2>Test AI Proxy</h2>
     <div style="background: #f8f9fa; padding: 15px; border-radius: 6px; margin-bottom: 20px;">
       <form method="post" action="/admin/aiconfig/test">
@@ -984,6 +1002,9 @@ def _render_ai_panel(msg: str = ""):
     
     <h2>Public API Usage</h2>
     <p><strong>No API key required!</strong> The <code>/ai/chat</code> endpoint is public and can be used from any website or application.</p>
+    
+    <h3>API Endpoint:</h3>
+    <p><code>POST https://emailapi.6ray.com/ai/chat</code></p>
     
     <h3>cURL Example:</h3>
     <pre style="background:#f8f9fa;padding:1rem;border-radius:4px;overflow:auto">
@@ -1046,6 +1067,23 @@ async def ai_admin_delete_provider(name: str, _: bool = Depends(_panel_auth)):
     success = delete_provider(name)
     msg = f"Provider '{name}' deleted" if success else "Failed to delete provider"
     return HTMLResponse(content=_render_ai_panel(msg))
+
+@app.post("/admin/aiconfig/cors")
+async def ai_admin_config_cors(
+    cors_origins: str = Form("*"),
+    _: bool = Depends(_panel_auth),
+):
+    """Configure CORS allowed origins for AI proxy endpoint."""
+    origins = cors_origins.strip()
+    if not origins:
+        origins = "*"
+    
+    _save_env_map({"CORS_ORIGINS": origins})
+    _reload_runtime_from_env()
+    return HTMLResponse(content=_render_ai_panel(
+        "⚠️ CORS settings saved. <strong>Service restart required</strong> for changes to take effect. "
+        "SSH to server and run: <code>sudo systemctl restart emailapi</code>"
+    ))
 
 @app.post("/admin/aiconfig/test")
 async def ai_admin_test_proxy(_: bool = Depends(_panel_auth)):

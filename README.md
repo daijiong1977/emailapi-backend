@@ -6,6 +6,7 @@ A FastAPI-based email service that receives email requests from iOS applications
 
 - 🚀 FastAPI backend for high-performance email sending
 - 📧 **Multiple Email Providers**: Gmail SMTP or Amazon SES (switchable via admin panel)
+- 🤖 **AI Proxy Service**: Hide AI API keys server-side, support OpenAI, Anthropic, Google AI, DeepSeek
 - 🔐 Secure credential management with environment variables
 - 📱 RESTful API designed for iOS app integration
 - ⚡ Asynchronous email sending with background tasks
@@ -13,6 +14,7 @@ A FastAPI-based email service that receives email requests from iOS applications
 - 📝 Comprehensive logging and error handling
 - 🎛️ **Admin Panel** for provider configuration and testing
 - ✅ **Test Connection** and **Send Test Email** features
+- 🌐 **CORS Support** with wildcard subdomain patterns
 
 ## Prerequisites
 
@@ -646,6 +648,62 @@ pytest
 
 ### API Documentation
 Access interactive API documentation at `http://localhost:8002/docs` when running locally.
+
+## AI Proxy Service
+
+The service includes a built-in AI proxy that hides API keys server-side and allows any website to use AI APIs securely.
+
+### Configuration
+
+1. **Admin Panel**: `https://emailapi.6ray.com/admin/aiconfig` (password: `771008`)
+2. **Add AI Provider**: Choose from OpenAI, Anthropic, Google AI, DeepSeek, or custom endpoints
+3. **Configure CORS**: Control which websites can access the proxy (supports wildcard subdomains)
+4. **Test**: Use the built-in test button to verify connectivity
+
+### Supported AI Providers
+
+- **OpenAI**: GPT-4, GPT-3.5-turbo, etc.
+- **Anthropic**: Claude models
+- **Google AI**: Gemini models
+- **DeepSeek**: DeepSeek-V3 (chat and reasoner modes)
+- **Custom**: Any OpenAI-compatible endpoint
+
+### Public API Endpoint
+
+**No API key required** - The AI proxy is public and can be called from any allowed origin:
+
+```bash
+curl -X POST https://emailapi.6ray.com/ai/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
+
+JavaScript example:
+```javascript
+fetch('https://emailapi.6ray.com/ai/chat', {
+  method: 'POST',
+  headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify({
+    messages: [{"role": "user", "content": "Hello!"}]
+  })
+})
+.then(res => res.json())
+.then(data => console.log(data.response));
+```
+
+### CORS Configuration
+
+Control which websites can access your AI proxy:
+
+- **Allow all** (default): `*`
+- **Specific domain**: `https://6ray.com`
+- **Wildcard subdomains**: `https://*.6ray.com` (matches api.6ray.com, app.6ray.com, etc.)
+- **Multiple origins**: `https://6ray.com,https://*.6ray.com,http://localhost:3000`
+- **Local development**: `http://localhost:3000,http://127.0.0.1:3000`
+
+Configure via admin panel at `https://emailapi.6ray.com/admin/aiconfig` - requires service restart after changes.
 
 ## Documentation
 
