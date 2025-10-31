@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Header, st
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
-from typing import Optional, Annotated
+from typing import Optional, Annotated, List
 import sqlite3
 import os
 import string
@@ -42,6 +42,20 @@ class EmailResponse(BaseModel):
     success: bool
     message: str
     email_id: Optional[str] = None
+
+
+class BulkEmailRequest(BaseModel):
+    to_emails: List[EmailStr]
+    subject: str
+    message: str
+    from_name: Optional[str] = None
+
+
+class BulkEmailResponse(BaseModel):
+    total: int
+    successful: int
+    failed: int
+    results: List[dict]
 
 
 class BootstrapRequest(BaseModel):
@@ -278,6 +292,76 @@ async def send_email(email_request: EmailRequest, background_tasks: BackgroundTa
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to queue email: {str(e)}")
+
+@app.post("/send-bulk-email", response_model=BulkEmailResponse, dependencies=[Depends(require_api_key)])
+async def send_bulk_email(
+    request: BulkEmailRequest,
+    background_tasks: BackgroundTasks,
+    username: str = Depends(require_api_key)
+):
+    """
+    Send the same email to multiple recipients.
+    
+    Rate limits apply per provider:
+    - Gmail: ~500 emails/day
+    - Amazon SES: Check your quota (default 200/day sandbox, higher in production)
+    
+    Returns counts and per-recipient status.
+    """
+    # Check domain policy for all recipients
+    for to_email in request.to_emails:
+        try:
+            _enforce_recipient_policy(to_email)
+        except HTTPException as e:
+            # If any recipient fails domain policy, fail the entire batch
+            raise HTTPException(
+                status_code=e.status_code,
+                detail=f"Domain policy violation for {to_email}: {e.detail}"
+            )
+    
+    # Send to each recipient
+    results = []
+    successful = 0
+    failed = 0
+    
+    for to_email in request.to_emails:
+        try:
+            # Send email synchronously to track individual results
+            success = await email_service.send_email(
+                to_email=to_email,
+                subject=request.subject,
+                message=request.message,
+                from_name=request.from_name
+            )
+            
+            if success:
+                results.append({
+                    "email": to_email,
+                    "status": "success"
+                })
+                successful += 1
+            else:
+                results.append({
+                    "email": to_email,
+                    "status": "failed",
+                    "error": "Send operation returned False"
+                })
+                failed += 1
+                
+        except Exception as e:
+            results.append({
+                "email": to_email,
+                "status": "failed",
+                "error": str(e)
+            })
+            failed += 1
+    
+    return BulkEmailResponse(
+        total=len(request.to_emails),
+        successful=successful,
+        failed=failed,
+        results=results
+    )
 
 @app.get("/health")
 async def health_check():
