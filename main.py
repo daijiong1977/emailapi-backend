@@ -10,6 +10,14 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 from email_service import EmailService
 from config import Config
+from ai_proxy import AIProxyService
+from ai_providers import (
+    add_ai_provider,
+    get_enabled_provider,
+    list_ai_providers,
+    toggle_provider,
+    delete_provider
+)
 from api_keys import (
     init_db,
     verify_key,
@@ -25,6 +33,7 @@ from api_keys import (
 
 email_service = EmailService()
 config = Config()
+ai_proxy = AIProxyService()
 
 async def _reinitialize_email_service():
     """Reinitialize email service with current configuration."""
@@ -56,6 +65,19 @@ class BulkEmailResponse(BaseModel):
     successful: int
     failed: int
     results: List[dict]
+
+
+class AIChatRequest(BaseModel):
+    messages: List[dict]  # [{"role": "user", "content": "..."}]
+    model: Optional[str] = None
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+
+
+class AIChatResponse(BaseModel):
+    success: bool
+    response: Optional[dict] = None
+    error: Optional[str] = None
 
 
 class BootstrapRequest(BaseModel):
@@ -362,6 +384,56 @@ async def send_bulk_email(
         failed=failed,
         results=results
     )
+
+@app.post("/ai/chat", response_model=AIChatResponse, dependencies=[Depends(require_api_key)])
+async def ai_chat(
+    request: AIChatRequest,
+    username: str = Depends(require_api_key)
+):
+    """
+    Proxy AI chat completion requests to configured AI provider.
+    
+    Supports OpenAI, Anthropic, Google AI, and custom endpoints.
+    Hides API keys from clients - all authentication happens server-side.
+    """
+    # Get enabled provider
+    provider = get_enabled_provider()
+    if not provider:
+        raise HTTPException(
+            status_code=503,
+            detail="No AI provider configured. Configure one in /admin/aiconfig"
+        )
+    
+    try:
+        # Prepare request parameters
+        params = {
+            "messages": request.messages
+        }
+        if request.model:
+            params["model"] = request.model
+        if request.temperature is not None:
+            params["temperature"] = request.temperature
+        if request.max_tokens is not None:
+            params["max_tokens"] = request.max_tokens
+        
+        # Make proxied request
+        response = await ai_proxy.chat_completion(
+            provider_type=provider["provider_type"],
+            api_key=provider["api_key"],
+            base_url=provider.get("base_url"),
+            **params
+        )
+        
+        return AIChatResponse(
+            success=True,
+            response=response
+        )
+        
+    except Exception as e:
+        return AIChatResponse(
+            success=False,
+            error=str(e)
+        )
 
 @app.get("/health")
 async def health_check():
@@ -728,6 +800,147 @@ async def admin_config_delete_all_seeds(_: bool = Depends(_panel_auth)):
     deleted = delete_all_seed_users(DB_PATH)
     msg = f"Deleted ALL seed user keys: {deleted} removed."
     return HTMLResponse(content=_render_panel(msg))
+
+# --- AI Admin Panel ---
+
+def _render_ai_panel(msg: str = ""):
+    """Render AI provider configuration panel."""
+    providers = list_ai_providers(include_keys=False)
+    
+    provider_rows = ""
+    for p in providers:
+        enabled_badge = "✅ ENABLED" if p["enabled"] else "⚪"
+        provider_rows += f"""
+        <tr>
+            <td>{p['name']}</td>
+            <td>{p['provider_type']}</td>
+            <td>{p['api_key']}</td>
+            <td>{p['base_url'] or ''}</td>
+            <td>{enabled_badge}</td>
+            <td>
+                <form method="post" action="/admin/aiconfig/toggle/{p['name']}" style="display:inline">
+                    <button type="submit">{'Disable' if p['enabled'] else 'Enable'}</button>
+                </form>
+                <form method="post" action="/admin/aiconfig/delete/{p['name']}" style="display:inline" onsubmit="return confirm('Delete {p['name']}?')">
+                    <button type="submit" style="background:#dc3545">Delete</button>
+                </form>
+            </td>
+        </tr>
+        """
+    
+    html = f"""
+    <!DOCTYPE html>
+    <html><head><title>AI Provider Configuration</title>
+    <style>
+      body{{font-family:sans-serif;max-width:1000px;margin:2rem auto;padding:1rem}}
+      h1,h2{{color:#333}}
+      form{{margin:1rem 0}}
+      label{{display:block;margin:.5rem 0 .2rem}}
+      input,select{{padding:.5rem;width:100%;max-width:400px;border:1px solid #ddd;border-radius:4px}}
+      button{{padding:.5rem 1rem;background:#007bff;color:white;border:none;border-radius:4px;cursor:pointer;margin-right:.5rem}}
+      button:hover{{background:#0056b3}}
+      table{{width:100%;border-collapse:collapse;margin:1rem 0}}
+      th,td{{padding:.5rem;text-align:left;border-bottom:1px solid #ddd}}
+      th{{background:#f8f9fa}}
+      .msg{{padding:1rem;margin:1rem 0;background:#d4edda;border:1px solid #c3e6cb;border-radius:4px}}
+      .help-text{{font-size:0.85em;color:#666;margin-top:0.25rem}}
+    </style>
+    </head>
+    <body>
+    <h1>AI Provider Configuration</h1>
+    <p><a href="/admin/config">← Back to Email Config</a></p>
+    {'<div class="msg">' + msg + '</div>' if msg else ''}
+    
+    <h2>Add/Update AI Provider</h2>
+    <form method="post" action="/admin/aiconfig/add">
+      <label>Provider Name</label>
+      <input name="name" type="text" placeholder="my-openai" required />
+      <div class="help-text">Unique name for this provider</div>
+      
+      <label>Provider Type</label>
+      <select name="provider_type" required>
+        <option value="openai">OpenAI (GPT-4, GPT-3.5, etc.)</option>
+        <option value="anthropic">Anthropic (Claude)</option>
+        <option value="google">Google AI (Gemini)</option>
+        <option value="custom">Custom (OpenAI-compatible)</option>
+      </select>
+      
+      <label>API Key</label>
+      <input name="api_key" type="password" placeholder="sk-..." required />
+      <div class="help-text">Provider API key</div>
+      
+      <label>Base URL (optional, for custom providers)</label>
+      <input name="base_url" type="text" placeholder="https://api.example.com/v1/chat/completions" />
+      <div class="help-text">Only needed for custom OpenAI-compatible endpoints</div>
+      
+      <button type="submit">Add/Update Provider</button>
+    </form>
+    
+    <h2>Configured Providers</h2>
+    <table>
+      <tr>
+        <th>Name</th>
+        <th>Type</th>
+        <th>API Key</th>
+        <th>Base URL</th>
+        <th>Status</th>
+        <th>Actions</th>
+      </tr>
+      {provider_rows or '<tr><td colspan="6">No providers configured</td></tr>'}
+    </table>
+    
+    <h2>Test AI Endpoint</h2>
+    <p>Use <code>POST /ai/chat</code> with your API key to send requests through the proxy.</p>
+    <pre style="background:#f8f9fa;padding:1rem;border-radius:4px">
+curl -X POST https://emailapi.6ray.com/ai/chat \\
+  -H "Content-Type: application/json" \\
+  -H "X-API-Key: your-api-key" \\
+  -d '{{
+    "messages": [{{"role": "user", "content": "Hello!"}}],
+    "model": "gpt-3.5-turbo"
+  }}'
+    </pre>
+    
+    </body></html>
+    """
+    return html
+
+@app.get("/admin/aiconfig", response_class=HTMLResponse)
+async def ai_admin_panel(_: bool = Depends(_panel_auth)):
+    return HTMLResponse(content=_render_ai_panel())
+
+@app.post("/admin/aiconfig/add")
+async def ai_admin_add_provider(
+    name: str = Form(...),
+    provider_type: str = Form(...),
+    api_key: str = Form(...),
+    base_url: str = Form(""),
+    _: bool = Depends(_panel_auth)
+):
+    base_url = base_url.strip() if base_url else None
+    success = add_ai_provider(name, provider_type, api_key, base_url, enabled=False)
+    msg = f"Provider '{name}' added successfully!" if success else "Failed to add provider"
+    return HTMLResponse(content=_render_ai_panel(msg))
+
+@app.post("/admin/aiconfig/toggle/{name}")
+async def ai_admin_toggle_provider(name: str, _: bool = Depends(_panel_auth)):
+    # Get current provider to determine new state
+    providers = list_ai_providers()
+    current = next((p for p in providers if p["name"] == name), None)
+    if not current:
+        return HTMLResponse(content=_render_ai_panel(f"Provider '{name}' not found"))
+    
+    new_state = not current["enabled"]
+    success = toggle_provider(name, new_state)
+    msg = f"Provider '{name}' {'enabled' if new_state else 'disabled'}" if success else "Failed to toggle provider"
+    return HTMLResponse(content=_render_ai_panel(msg))
+
+@app.post("/admin/aiconfig/delete/{name}")
+async def ai_admin_delete_provider(name: str, _: bool = Depends(_panel_auth)):
+    success = delete_provider(name)
+    msg = f"Provider '{name}' deleted" if success else "Failed to delete provider"
+    return HTMLResponse(content=_render_ai_panel(msg))
+
 # --- Admin endpoints ---
 class CreateKeyRequest(BaseModel):
     username: str
