@@ -1,22 +1,25 @@
 # Email API Service
 
-A FastAPI-based email service that receives email requests from iOS applications and sends emails using Gmail SMTP with app password authentication.
+A FastAPI-based email service that receives email requests from iOS applications and sends emails using **Gmail SMTP** or **Amazon SES**.
 
 ## Features
 
 - 🚀 FastAPI backend for high-performance email sending
-- 📧 Gmail SMTP integration with app password authentication
+- 📧 **Multiple Email Providers**: Gmail SMTP or Amazon SES (switchable via admin panel)
 - 🔐 Secure credential management with environment variables
 - 📱 RESTful API designed for iOS app integration
 - ⚡ Asynchronous email sending with background tasks
 - 🏥 Health check endpoints
 - 📝 Comprehensive logging and error handling
+- 🎛️ **Admin Panel** for provider configuration and testing
+- ✅ **Test Connection** and **Send Test Email** features
 
 ## Prerequisites
 
 - Python 3.8+
-- Gmail account with 2-Factor Authentication enabled
-- Gmail App Password (generated from Google Account settings)
+- **Email Provider** (choose one):
+  - **Gmail**: Account with 2FA enabled + App Password
+  - **Amazon SES**: AWS account with SES enabled + IAM user with SES permissions
 
 ## Quick Start
 
@@ -33,20 +36,55 @@ cd email-api-service
 pip install -r requirements.txt
 ```
 
-### 3. Configure Gmail Credentials
+### 3. Configure Email Provider
 
-On first run, the application will prompt you to set up Gmail credentials:
+#### Option A: Use Admin Panel (Recommended)
 
+1. Start the application:
+   ```bash
+   python main.py
+   ```
+
+2. Visit the admin panel: `http://localhost:8002/admin/config`
+   - Default password: `771008`
+
+3. **Select your email provider** (Gmail or Amazon SES)
+
+4. **For Gmail**:
+   - Enter Gmail address
+   - Enter App Password (16 characters, no spaces)
+   - Generate at: [Google App Passwords](https://myaccount.google.com/apppasswords)
+
+5. **For Amazon SES**:
+   - Enter AWS Region (e.g., `us-east-2`)
+   - Enter AWS Access Key ID
+   - Enter AWS Secret Access Key
+   - Enter verified sender email (must be verified in SES)
+
+6. Click **"Test Connection"** to verify credentials
+
+7. Click **"Send Test Email"** to send an actual test email
+
+#### Option B: Manual Configuration
+
+Create a `.env` file:
+
+**For Gmail:**
 ```bash
-python main.py
-```
-
-Or manually create a `.env` file:
-
-```bash
-# .env
+EMAIL_PROVIDER=gmail
 GMAIL_USER=your-gmail@gmail.com
 GMAIL_APP_PASSWORD=your-16-char-app-password
+```
+
+**For Amazon SES:**
+```bash
+EMAIL_PROVIDER=ses
+AWS_REGION=us-east-2
+AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+SES_FROM_EMAIL=verified@yourdomain.com
+# Optional:
+# SES_CONFIGURATION_SET=my-config-set
 ```
 
 ### 4. Run the Application
@@ -134,25 +172,97 @@ GET /config/status
 **Response:**
 ```json
 {
-  "gmail_configured": true,
-  "message": "Gmail is configured and ready"
+  "email_provider": "Amazon SES",
+  "configured": true,
+  "message": "Amazon SES is configured and ready"
 }
 ```
 
-## Gmail Setup Instructions
+### Admin Panel
+```http
+GET /admin/config
+```
 
-### 1. Enable 2-Factor Authentication
-1. Go to [Google Account Security](https://myaccount.google.com/security)
-2. Enable 2-Factor Authentication if not already enabled
+Access the admin panel at `https://emailapi.6ray.com/admin/config` to:
+- Switch between Gmail and Amazon SES
+- Configure email provider credentials
+- Test connection without sending emails
+- Send test emails to verify end-to-end delivery
 
-### 2. Generate App Password
-1. Go to [App Passwords](https://myaccount.google.com/apppasswords)
-2. Select "Mail" as the app
-3. Choose "Other (custom name)" and enter "Email API"
-4. Copy the 16-character password (ignore spaces)
+## Email Provider Setup
 
-### 3. Configure Environment
-The app will prompt for credentials on first run, or you can set them manually in the `.env` file.
+### Gmail Setup
+
+1. **Enable 2-Factor Authentication**:
+   - Go to [Google Account Security](https://myaccount.google.com/security)
+   - Enable 2FA if not already enabled
+
+2. **Generate App Password**:
+   - Go to [App Passwords](https://myaccount.google.com/apppasswords)
+   - Select "Mail" → "Other (custom name)" → Enter "Email API"
+   - Copy the 16-character password
+
+3. **Configure via Admin Panel** or add to `.env`:
+   ```bash
+   EMAIL_PROVIDER=gmail
+   GMAIL_USER=your@gmail.com
+   GMAIL_APP_PASSWORD=abcdabcdabcdabcd
+   ```
+
+For detailed Gmail setup, see: [`EMAIL_PROVIDER_CONFIG.md`](EMAIL_PROVIDER_CONFIG.md)
+
+### Amazon SES Setup
+
+1. **Create/Configure IAM User**:
+   - User needs `ses:SendEmail`, `ses:SendRawEmail`, `ses:GetSendQuota` permissions
+   - Generate access key and secret key
+
+2. **Verify Sender Email**:
+   - In AWS SES Console (us-east-2 or your region)
+   - Go to "Verified identities" → "Create identity"
+   - Verify your sender email address
+
+3. **Configure via Admin Panel** or add to `.env`:
+   ```bash
+   EMAIL_PROVIDER=ses
+   AWS_REGION=us-east-2
+   AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
+   AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+   SES_FROM_EMAIL=verified@yourdomain.com
+   ```
+
+4. **Request Production Access** (optional):
+   - By default, SES is in sandbox mode (can only send to verified addresses)
+   - Request production access in AWS SES Console for unrestricted sending
+
+For detailed SES setup with IAM policies, see: [`SES_IAM_SETUP.md`](SES_IAM_SETUP.md)
+
+## Testing Your Configuration
+
+### Using Admin Panel (Easiest)
+
+1. Visit: `https://emailapi.6ray.com/admin/config`
+2. Click **"Test Connection"** - Verifies credentials without sending email
+3. Click **"Send Test Email"** - Sends actual test email to your address
+
+### Using API
+
+```bash
+# Get an API key
+curl -X POST https://emailapi.6ray.com/client/bootstrap \
+  -H "Content-Type: application/json" \
+  -d '{"device_id":"test-device-001"}'
+
+# Send test email
+curl -X POST https://emailapi.6ray.com/send-email \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: <your-api-key>" \
+  -d '{
+    "to_email": "your@email.com",
+    "subject": "Test Email",
+    "message": "Hello from Email API!"
+  }'
+```
 
 ## Deployment on Amazon EC2 (Red Hat 10)
 
@@ -165,8 +275,29 @@ curl -fsSL https://raw.githubusercontent.com/daijiong1977/emailapi-backend/main/
 
 Note: The installer does not install Certbot; HTTPS/SSL is assumed to be handled externally on this host. If you need to provision certificates later, use your existing method and reload Nginx.
 
-After install, edit `/opt/emailapi/.env` with your Gmail and app password, then:
+After install, edit `/opt/emailapi/.env` with your email provider credentials:
 
+**For Gmail:**
+```bash
+sudo -u emailapi nano /opt/emailapi/.env
+# Add:
+EMAIL_PROVIDER=gmail
+GMAIL_USER=your@gmail.com
+GMAIL_APP_PASSWORD=abcdabcdabcdabcd
+```
+
+**For Amazon SES:**
+```bash
+sudo -u emailapi nano /opt/emailapi/.env
+# Add:
+EMAIL_PROVIDER=ses
+AWS_REGION=us-east-2
+AWS_ACCESS_KEY_ID=your-access-key
+AWS_SECRET_ACCESS_KEY=your-secret-key
+SES_FROM_EMAIL=verified@yourdomain.com
+```
+
+Then restart:
 ```bash
 sudo systemctl restart emailapi
 ```
@@ -457,6 +588,34 @@ pytest
 
 ### API Documentation
 Access interactive API documentation at `http://localhost:8002/docs` when running locally.
+
+## Documentation
+
+- **[EMAIL_PROVIDER_CONFIG.md](EMAIL_PROVIDER_CONFIG.md)** - Detailed guide for configuring Gmail and Amazon SES
+- **[SES_IAM_SETUP.md](SES_IAM_SETUP.md)** - AWS IAM user setup and permissions for SES
+- **[ADMIN_PANEL_GUIDE.md](ADMIN_PANEL_GUIDE.md)** - Admin panel usage and features
+- **[frontend.md](frontend.md)** - iOS client integration guide with Swift examples
+
+## Architecture
+
+### Email Provider Abstraction
+
+The service uses a provider pattern allowing easy switching between email services:
+
+```
+EmailService (Facade)
+    ↓
+EmailProviderFactory
+    ↓
+    ├─ GmailProvider (SMTP)
+    └─ SESProvider (AWS SDK)
+```
+
+**Benefits:**
+- Switch providers via environment variable or admin panel
+- Add new providers without changing core logic
+- Test each provider independently
+- Provider-specific configuration isolation
 
 ## License
 
