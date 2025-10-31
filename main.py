@@ -6,6 +6,7 @@ from typing import Optional, Annotated
 import sqlite3
 import os
 import string
+from datetime import datetime
 from contextlib import asynccontextmanager
 from email_service import EmailService
 from config import Config
@@ -358,8 +359,8 @@ def _render_panel(message: str = "") -> str:
       <h2>Amazon SES Configuration</h2>
       <form method="post" action="/admin/config/ses">
         <label>AWS Region</label>
-        <input name="aws_region" type="text" value="{aws_region}" placeholder="us-east-1" />
-        <div class="help-text">AWS region where your SES is configured (e.g., us-east-1, eu-west-1)</div>
+        <input name="aws_region" type="text" value="{aws_region}" placeholder="us-east-2" />
+        <div class="help-text">AWS region where your SES is configured (e.g., us-east-2 for Ohio, us-east-1 for Virginia)</div>
         
         <label>AWS Access Key ID</label>
         <input name="aws_access_key_id" type="text" value="{aws_access_key}" placeholder="AKIAIOSFODNN7EXAMPLE" />
@@ -380,6 +381,14 @@ def _render_panel(message: str = "") -> str:
         <button type="submit">Save Amazon SES Settings</button>
       </form>
     </div>
+
+    <h2>Test Email Connection</h2>
+    <form method="post" action="/admin/config/test-email">
+      <label>Test Email Recipient</label>
+      <input name="test_email" type="email" placeholder="your@email.com" required />
+      <div class="help-text">Send a test email to verify your email provider configuration</div>
+      <button type="submit">Send Test Email</button>
+    </form>
 
     <h2>Recipient Domain Policy</h2>
     <form method="post" action="/admin/config/domains">
@@ -481,6 +490,47 @@ async def admin_config_ses(
     _save_env_map(updates)
     _reload_runtime_from_env()
     return HTMLResponse(content=_render_panel("Amazon SES settings saved. Restart service to apply changes."))
+
+@app.post("/admin/config/test-email")
+async def admin_config_test_email(
+    test_email: str = Form(...),
+    _: bool = Depends(_panel_auth),
+):
+    """Send a test email to verify email provider configuration"""
+    try:
+        # Try to send test email
+        success = await email_service.send_email(
+            to_email=test_email.strip(),
+            subject="Email API Test - Configuration Successful",
+            html_content=f"""
+            <html>
+            <body style="font-family: Arial, sans-serif; padding: 20px;">
+                <h2>✅ Email Configuration Test Successful</h2>
+                <p>This is a test email from your Email API service.</p>
+                <hr>
+                <p><strong>Provider:</strong> {email_service.get_provider_name()}</p>
+                <p><strong>Test Time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
+                <p><strong>Server:</strong> emailapi.6ray.com</p>
+                <hr>
+                <p style="color: #666; font-size: 12px;">
+                    If you received this email, your email provider is configured correctly and ready to send emails.
+                </p>
+            </body>
+            </html>
+            """,
+            from_name="Email API Test"
+        )
+        
+        if success:
+            return HTMLResponse(content=_render_panel(
+                f"✅ Test email sent successfully to {test_email} using {email_service.get_provider_name()}. Check your inbox!"
+            ))
+        else:
+            return HTMLResponse(content=_render_panel(
+                f"❌ Failed to send test email. Check your {email_service.get_provider_name()} configuration and server logs."
+            ))
+    except Exception as e:
+        return HTMLResponse(content=_render_panel(f"❌ Error sending test email: {str(e)}"))
 
 @app.post("/admin/config/domains")
 async def admin_config_domains(
