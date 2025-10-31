@@ -85,8 +85,8 @@ class SESProvider(EmailProvider):
                 }
             }
 
-            # Add configuration set if configured
-            if self.ses_configuration_set:
+            # Add configuration set if configured (and not empty)
+            if self.ses_configuration_set and self.ses_configuration_set.strip():
                 email_params['ConfigurationSetName'] = self.ses_configuration_set
 
             # Send email
