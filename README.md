@@ -124,6 +124,64 @@ X-API-Key: <your-api-key>
 }
 ```
 
+### Send Bulk Email
+
+Send the same email to multiple recipients in one API call:
+
+```http
+POST /send-bulk-email
+Content-Type: application/json
+X-API-Key: <your-api-key>
+```
+
+**Request:**
+```json
+{
+  "to_emails": [
+    "recipient1@example.com",
+    "recipient2@example.com",
+    "recipient3@example.com"
+  ],
+  "subject": "Newsletter Update",
+  "message": "Hello everyone! This is our latest update.",
+  "from_name": "Newsletter Team"
+}
+```
+
+**Response:**
+```json
+{
+  "total": 3,
+  "successful": 3,
+  "failed": 0,
+  "results": [
+    {
+      "email": "recipient1@example.com",
+      "status": "success"
+    },
+    {
+      "email": "recipient2@example.com",
+      "status": "success"
+    },
+    {
+      "email": "recipient3@example.com",
+      "status": "success"
+    }
+  ]
+}
+```
+
+**Rate Limits:**
+- **Gmail SMTP**: ~500 emails/day
+- **Amazon SES Sandbox**: 200 emails/day (recipients must be verified)
+- **Amazon SES Production**: Variable (request quota increase via AWS Console)
+
+**Best Practices:**
+- For large lists (>100), consider batching multiple requests
+- Check the `results` array for per-recipient status
+- Failed sends don't stop the batch - review `successful` vs `failed` counts
+- All recipients must pass domain policy checks or entire batch fails
+
 ### Client Bootstrap
 ```http
 POST /client/bootstrap
