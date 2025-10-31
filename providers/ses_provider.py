@@ -113,12 +113,10 @@ class SESProvider(EmailProvider):
     async def test_connection(self) -> bool:
         """Test SES connection by checking sending quota."""
         if not BOTO3_AVAILABLE:
-            print("❌ boto3 not available")
-            return False
+            raise Exception("boto3 library not available. Install with: pip install boto3")
 
         if not self.client:
-            print("❌ SES client not initialized")
-            return False
+            raise Exception("SES client not initialized. Call initialize() first or restart the service.")
 
         try:
             # Get sending quota as a simple connectivity test
@@ -126,9 +124,18 @@ class SESProvider(EmailProvider):
             max_send_rate = response.get('MaxSendRate', 0)
             print(f"✅ SES connection test passed (Max send rate: {max_send_rate}/sec)")
             return True
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            error_msg = e.response['Error']['Message']
+            print(f"❌ SES connection test ClientError [{error_code}]: {error_msg}")
+            raise Exception(f"AWS SES Error [{error_code}]: {error_msg}")
+        except NoCredentialsError as e:
+            error_msg = "AWS credentials not found or invalid"
+            print(f"❌ {error_msg}")
+            raise Exception(error_msg)
         except Exception as e:
             print(f"❌ SES connection test failed: {str(e)}")
-            return False
+            raise
 
     def is_configured(self) -> bool:
         """Check if SES credentials are configured."""
