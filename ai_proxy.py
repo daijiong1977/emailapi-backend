@@ -110,7 +110,7 @@ class AIProxyService:
         **kwargs
     ) -> Dict[str, Any]:
         """Google AI (Gemini) chat completion."""
-        model = model or "gemini-pro"
+        model = model or "gemini-1.5-flash"
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
         
         # Convert messages to Google format
