@@ -516,6 +516,27 @@ async def get_github_token():
         }
     }
 
+@app.get("/ai/apikey")
+async def get_gemini_apikey():
+    """
+    Get Gemini API key for authorized clients.
+    No authentication required - controlled by CORS.
+    Client app handles all model selection and parameters.
+    """
+    env_vars = _load_env_map()
+    
+    gemini_key = env_vars.get('GEMINI_API_KEY', '')
+    if not gemini_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Gemini API key not configured"
+        )
+    
+    return {
+        "success": True,
+        "apiKey": gemini_key
+    }
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
@@ -1069,6 +1090,22 @@ def _render_ai_panel(msg: str = ""):
       <button type="submit" style="background:#28a745">Test GitHub Connection</button>
     </form>
     
+    <h2>Gemini API Configuration</h2>
+    <form method="post" action="/admin/aiconfig/gemini/save">
+      <label>Gemini API Key</label>
+      <input name="gemini_key" type="password" placeholder="AIzaSy••••••••••••••••••••••••••••" value="{env_vars.get('GEMINI_API_KEY', '')}" style="width:100%;max-width:600px" />
+      <div class="help-text">
+        Get your API key at: <a href="https://aistudio.google.com/app/apikey" target="_blank">Google AI Studio</a><br>
+        Client app handles all model selection and parameters - just provide the API key.
+      </div>
+      
+      <button type="submit">Save Gemini API Key</button>
+    </form>
+    
+    <form method="post" action="/admin/aiconfig/gemini/test" style="margin-top:1rem">
+      <button type="submit" style="background:#28a745">Test Gemini API Key</button>
+    </form>
+    
     <h2>CORS Settings</h2>
     <form method="post" action="/admin/aiconfig/cors">
       <label>Allowed Origins (comma-separated URLs, or "*" for all)</label>
@@ -1266,6 +1303,66 @@ async def ai_admin_test_github(_: bool = Depends(_panel_auth)):
         import traceback
         error_detail = f"{str(e)}<br><br><pre style='font-size:0.85em'>{traceback.format_exc()}</pre>"
         msg = f"❌ Connection test failed: {error_detail}"
+    
+    return HTMLResponse(content=_render_ai_panel(msg))
+
+@app.post("/admin/aiconfig/gemini/save")
+async def ai_admin_save_gemini(
+    gemini_key: str = Form(""),
+    _: bool = Depends(_panel_auth)
+):
+    """Save Gemini API key configuration."""
+    if gemini_key.strip():
+        _save_env_map({"GEMINI_API_KEY": gemini_key.strip()})
+        msg = "✅ Gemini API key saved successfully!"
+    else:
+        msg = "⚠️ No API key provided"
+    
+    return HTMLResponse(content=_render_ai_panel(msg))
+
+@app.post("/admin/aiconfig/gemini/test")
+async def ai_admin_test_gemini(_: bool = Depends(_panel_auth)):
+    """Test Gemini API key."""
+    import httpx
+    
+    env_vars = _load_env_map()
+    api_key = env_vars.get('GEMINI_API_KEY', '')
+    
+    if not api_key:
+        return HTMLResponse(content=_render_ai_panel("❌ Gemini API key not configured"))
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}",
+                headers={"Content-Type": "application/json"},
+                json={
+                    "contents": [{
+                        "parts": [{"text": "Hello! Respond with 'OK' if you receive this."}]
+                    }]
+                }
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                response_text = result.get('candidates', [{}])[0].get('content', {}).get('parts', [{}])[0].get('text', 'No response')
+                msg = f"""✅ Gemini API key is valid!<br><br>
+                <strong>Test Response:</strong><br>
+                <pre style='background:#f8f9fa;padding:1rem;border-radius:4px;white-space:pre-wrap'>{response_text}</pre>
+                """
+            elif response.status_code == 400:
+                error_data = response.json()
+                error_msg = error_data.get('error', {}).get('message', response.text)
+                msg = f"❌ Bad request: {error_msg}"
+            elif response.status_code == 403:
+                msg = "❌ API key is invalid or doesn't have permission to access Gemini API"
+            else:
+                msg = f"❌ Gemini API returned {response.status_code}: {response.text}"
+                
+    except Exception as e:
+        import traceback
+        error_detail = f"{str(e)}<br><br><pre style='font-size:0.85em'>{traceback.format_exc()}</pre>"
+        msg = f"❌ API key test failed: {error_detail}"
     
     return HTMLResponse(content=_render_ai_panel(msg))
 
