@@ -111,21 +111,46 @@ class AIProxyService:
     ) -> Dict[str, Any]:
         """Google AI (Gemini) chat completion."""
         model = model or "gemini-pro"
-        url = f"https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
         
         # Convert messages to Google format
+        # Google doesn't support 'system' role, merge system messages into user message
         contents = []
+        system_content = ""
+        
         for msg in messages:
-            role = "user" if msg["role"] == "user" else "model"
-            contents.append({
-                "role": role,
-                "parts": [{"text": msg["content"]}]
-            })
+            if msg["role"] == "system":
+                # Collect system messages
+                system_content += msg["content"] + "\n\n"
+            elif msg["role"] == "user":
+                # Prepend system content to first user message
+                content = msg["content"]
+                if system_content:
+                    content = system_content + content
+                    system_content = ""  # Only use once
+                contents.append({
+                    "role": "user",
+                    "parts": [{"text": content}]
+                })
+            elif msg["role"] == "assistant":
+                contents.append({
+                    "role": "model",
+                    "parts": [{"text": msg["content"]}]
+                })
         
         payload = {
-            "contents": contents,
-            **kwargs
+            "contents": contents
         }
+        
+        # Add generation config if temperature or max_tokens provided
+        generation_config = {}
+        if "temperature" in kwargs and kwargs["temperature"] is not None:
+            generation_config["temperature"] = kwargs["temperature"]
+        if "max_tokens" in kwargs and kwargs["max_tokens"] is not None:
+            generation_config["maxOutputTokens"] = kwargs["max_tokens"]
+        
+        if generation_config:
+            payload["generationConfig"] = generation_config
         
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(url, json=payload)
