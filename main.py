@@ -460,8 +460,12 @@ async def ai_chat(request: AIChatRequest):
         params = {
             "messages": request.messages
         }
+        # Use model from request, or fall back to provider's configured model
         if request.model:
             params["model"] = request.model
+        elif provider.get("model"):
+            params["model"] = provider["model"]
+        
         if request.temperature is not None:
             params["temperature"] = request.temperature
         if request.max_tokens is not None:
@@ -914,10 +918,12 @@ def _render_ai_panel(msg: str = ""):
     provider_rows = ""
     for p in providers:
         enabled_badge = "✅ ENABLED" if p["enabled"] else "⚪"
+        model_display = p.get('model', '') or '-'
         provider_rows += f"""
         <tr>
             <td>{p['name']}</td>
             <td>{p['provider_type']}</td>
+            <td>{model_display}</td>
             <td>{p['api_key']}</td>
             <td>{p['base_url'] or ''}</td>
             <td>{enabled_badge}</td>
@@ -974,6 +980,16 @@ def _render_ai_panel(msg: str = ""):
       <input name="api_key" type="password" placeholder="sk-..." required />
       <div class="help-text">Provider API key</div>
       
+      <label>Model (optional)</label>
+      <input name="model" type="text" placeholder="gpt-4, gemini-2.0-flash-exp, claude-3-opus, etc." />
+      <div class="help-text">
+        Specific model to use. Leave empty for provider default.<br>
+        • OpenAI: gpt-4, gpt-4-turbo, gpt-3.5-turbo<br>
+        • Google: gemini-2.0-flash-exp, gemini-1.5-pro, gemini-1.5-flash<br>
+        • Anthropic: claude-3-opus, claude-3-sonnet, claude-3-haiku<br>
+        • DeepSeek: deepseek-chat, deepseek-reasoner
+      </div>
+      
       <label>Base URL (optional, for custom providers)</label>
       <input name="base_url" type="text" placeholder="https://api.example.com/v1/chat/completions" />
       <div class="help-text">Only needed for custom OpenAI-compatible endpoints</div>
@@ -986,12 +1002,13 @@ def _render_ai_panel(msg: str = ""):
       <tr>
         <th>Name</th>
         <th>Type</th>
+        <th>Model</th>
         <th>API Key</th>
         <th>Base URL</th>
         <th>Status</th>
         <th>Actions</th>
       </tr>
-      {provider_rows or '<tr><td colspan="6">No providers configured</td></tr>'}
+      {provider_rows or '<tr><td colspan="7">No providers configured</td></tr>'}
     </table>
     
     <h2>CORS Settings</h2>
@@ -1057,11 +1074,13 @@ async def ai_admin_add_provider(
     name: str = Form(...),
     provider_type: str = Form(...),
     api_key: str = Form(...),
+    model: str = Form(""),
     base_url: str = Form(""),
     _: bool = Depends(_panel_auth)
 ):
     base_url = base_url.strip() if base_url else None
-    success = add_ai_provider(name, provider_type, api_key, base_url, enabled=False)
+    model = model.strip() if model else None
+    success = add_ai_provider(name, provider_type, api_key, base_url, enabled=False, model=model)
     msg = f"Provider '{name}' added successfully!" if success else "Failed to add provider"
     return HTMLResponse(content=_render_ai_panel(msg))
 
@@ -1134,7 +1153,7 @@ async def ai_admin_test_proxy(_: bool = Depends(_panel_auth)):
             provider_type=provider["provider_type"],
             api_key=provider["api_key"],
             messages=[{"role": "user", "content": "5+7 is what?"}],
-            model=None,  # Use default model
+            model=provider.get("model"),  # Use provider's configured model
             base_url=provider.get("base_url"),
             temperature=None,
             max_tokens=None

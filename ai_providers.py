@@ -19,6 +19,7 @@ def init_ai_db():
             name TEXT NOT NULL UNIQUE,
             provider_type TEXT NOT NULL,
             api_key TEXT NOT NULL,
+            model TEXT,
             base_url TEXT,
             enabled INTEGER DEFAULT 1,
             created_at TEXT NOT NULL,
@@ -26,11 +27,18 @@ def init_ai_db():
         )
     """)
     
-    conn.commit()
+    # Add model column to existing tables if needed
+    try:
+        cursor.execute("ALTER TABLE ai_providers ADD COLUMN model TEXT")
+        conn.commit()
+    except sqlite3.OperationalError:
+        # Column already exists
+        pass
+    
     conn.close()
 
 
-def add_ai_provider(name: str, provider_type: str, api_key: str, base_url: Optional[str] = None, enabled: bool = True) -> bool:
+def add_ai_provider(name: str, provider_type: str, api_key: str, base_url: Optional[str] = None, enabled: bool = True, model: Optional[str] = None) -> bool:
     """Add or update an AI provider."""
     conn = sqlite3.connect(AI_DB_PATH)
     cursor = conn.cursor()
@@ -46,15 +54,15 @@ def add_ai_provider(name: str, provider_type: str, api_key: str, base_url: Optio
             # Update existing
             cursor.execute("""
                 UPDATE ai_providers 
-                SET provider_type = ?, api_key = ?, base_url = ?, enabled = ?, updated_at = ?
+                SET provider_type = ?, api_key = ?, model = ?, base_url = ?, enabled = ?, updated_at = ?
                 WHERE name = ?
-            """, (provider_type, api_key, base_url, 1 if enabled else 0, now, name))
+            """, (provider_type, api_key, model, base_url, 1 if enabled else 0, now, name))
         else:
             # Insert new
             cursor.execute("""
-                INSERT INTO ai_providers (name, provider_type, api_key, base_url, enabled, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (name, provider_type, api_key, base_url, 1 if enabled else 0, now, now))
+                INSERT INTO ai_providers (name, provider_type, api_key, model, base_url, enabled, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (name, provider_type, api_key, model, base_url, 1 if enabled else 0, now, now))
         
         conn.commit()
         return True
@@ -72,7 +80,7 @@ def get_enabled_provider() -> Optional[Dict[str, Any]]:
     cursor = conn.cursor()
     
     cursor.execute("""
-        SELECT id, name, provider_type, api_key, base_url, enabled, created_at, updated_at
+        SELECT id, name, provider_type, api_key, model, base_url, enabled, created_at, updated_at
         FROM ai_providers
         WHERE enabled = 1
         ORDER BY updated_at DESC
@@ -94,7 +102,7 @@ def list_ai_providers(include_keys: bool = False) -> List[Dict[str, Any]]:
     cursor = conn.cursor()
     
     cursor.execute("""
-        SELECT id, name, provider_type, api_key, base_url, enabled, created_at, updated_at
+        SELECT id, name, provider_type, api_key, model, base_url, enabled, created_at, updated_at
         FROM ai_providers
         ORDER BY name
     """)
