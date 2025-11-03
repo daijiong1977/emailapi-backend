@@ -490,6 +490,32 @@ async def ai_chat(request: AIChatRequest):
             error=str(e)
         )
 
+@app.get("/github/token")
+async def get_github_token():
+    """
+    Get GitHub token and configuration for authorized clients.
+    No authentication required - controlled by CORS.
+    """
+    env_vars = _load_env_map()
+    
+    github_token = env_vars.get('GITHUB_TOKEN', '')
+    if not github_token:
+        raise HTTPException(
+            status_code=503,
+            detail="GitHub token not configured"
+        )
+    
+    return {
+        "success": True,
+        "token": github_token,
+        "config": {
+            "owner": env_vars.get('GITHUB_OWNER', 'daijiong1977'),
+            "repo": env_vars.get('GITHUB_REPO', 'swimmeet'),
+            "branch": env_vars.get('GITHUB_BRANCH', 'main'),
+            "basePath": env_vars.get('GITHUB_BASE_PATH', 'public/shares')
+        }
+    }
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
@@ -1011,6 +1037,38 @@ def _render_ai_panel(msg: str = ""):
       {provider_rows or '<tr><td colspan="7">No providers configured</td></tr>'}
     </table>
     
+    <h2>GitHub Storage Configuration</h2>
+    <form method="post" action="/admin/aiconfig/github/save">
+      <label>GitHub Personal Access Token</label>
+      <input name="github_token" type="password" placeholder="ghp_••••••••••••••••••••••••••••" value="{env_vars.get('GITHUB_TOKEN', '')}" style="width:100%;max-width:600px" />
+      <div class="help-text">
+        Create token at: <a href="https://github.com/settings/tokens" target="_blank">github.com/settings/tokens</a><br>
+        Required permissions: <strong>repo</strong> (full control) or <strong>public_repo</strong> (for public repos only)
+      </div>
+      
+      <label>Repository Owner</label>
+      <input name="github_owner" type="text" placeholder="daijiong1977" value="{env_vars.get('GITHUB_OWNER', 'daijiong1977')}" />
+      <div class="help-text">GitHub username or organization name</div>
+      
+      <label>Repository Name</label>
+      <input name="github_repo" type="text" placeholder="swimmeet" value="{env_vars.get('GITHUB_REPO', 'swimmeet')}" />
+      <div class="help-text">Repository name</div>
+      
+      <label>Base Path</label>
+      <input name="github_basepath" type="text" placeholder="public/shares" value="{env_vars.get('GITHUB_BASE_PATH', 'public/shares')}" />
+      <div class="help-text">Base directory path in the repository</div>
+      
+      <label>Branch</label>
+      <input name="github_branch" type="text" placeholder="main" value="{env_vars.get('GITHUB_BRANCH', 'main')}" />
+      <div class="help-text">Branch name (default: main)</div>
+      
+      <button type="submit">Save GitHub Configuration</button>
+    </form>
+    
+    <form method="post" action="/admin/aiconfig/github/test" style="margin-top:1rem">
+      <button type="submit" style="background:#28a745">Test GitHub Connection</button>
+    </form>
+    
     <h2>CORS Settings</h2>
     <form method="post" action="/admin/aiconfig/cors">
       <label>Allowed Origins (comma-separated URLs, or "*" for all)</label>
@@ -1133,6 +1191,81 @@ async def ai_admin_config_cors(
         msg = "⚠️ CORS settings saved but restart timed out. Manual restart may be required."
     except Exception as e:
         msg = f"⚠️ CORS settings saved but auto-restart failed: {str(e)}. Manual restart required: <code>sudo systemctl restart emailapi</code>"
+    
+    return HTMLResponse(content=_render_ai_panel(msg))
+
+@app.post("/admin/aiconfig/github/save")
+async def ai_admin_save_github(
+    github_token: str = Form(""),
+    github_owner: str = Form(""),
+    github_repo: str = Form(""),
+    github_basepath: str = Form(""),
+    github_branch: str = Form("main"),
+    _: bool = Depends(_panel_auth)
+):
+    """Save GitHub configuration."""
+    config = {}
+    if github_token.strip():
+        config['GITHUB_TOKEN'] = github_token.strip()
+    if github_owner.strip():
+        config['GITHUB_OWNER'] = github_owner.strip()
+    if github_repo.strip():
+        config['GITHUB_REPO'] = github_repo.strip()
+    if github_basepath.strip():
+        config['GITHUB_BASE_PATH'] = github_basepath.strip()
+    if github_branch.strip():
+        config['GITHUB_BRANCH'] = github_branch.strip()
+    
+    if config:
+        _save_env_map(config)
+        msg = "✅ GitHub configuration saved successfully!"
+    else:
+        msg = "⚠️ No configuration provided"
+    
+    return HTMLResponse(content=_render_ai_panel(msg))
+
+@app.post("/admin/aiconfig/github/test")
+async def ai_admin_test_github(_: bool = Depends(_panel_auth)):
+    """Test GitHub connection."""
+    import httpx
+    
+    env_vars = _load_env_map()
+    token = env_vars.get('GITHUB_TOKEN', '')
+    owner = env_vars.get('GITHUB_OWNER', 'daijiong1977')
+    repo = env_vars.get('GITHUB_REPO', 'swimmeet')
+    
+    if not token:
+        return HTMLResponse(content=_render_ai_panel("❌ GitHub token not configured"))
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"https://api.github.com/repos/{owner}/{repo}",
+                headers={
+                    "Authorization": f"token {token}",
+                    "Accept": "application/vnd.github.v3+json"
+                }
+            )
+            
+            if response.status_code == 200:
+                repo_data = response.json()
+                msg = f"""✅ GitHub connection successful!<br><br>
+                <strong>Repository:</strong> {repo_data['full_name']}<br>
+                <strong>Private:</strong> {'Yes' if repo_data['private'] else 'No'}<br>
+                <strong>Default Branch:</strong> {repo_data['default_branch']}<br>
+                <strong>Description:</strong> {repo_data.get('description', 'N/A')}
+                """
+            elif response.status_code == 401:
+                msg = "❌ Authentication failed. Check your GitHub token."
+            elif response.status_code == 404:
+                msg = f"❌ Repository not found. Check owner ({owner}) and repo ({repo}) names."
+            else:
+                msg = f"❌ GitHub API returned {response.status_code}: {response.text}"
+                
+    except Exception as e:
+        import traceback
+        error_detail = f"{str(e)}<br><br><pre style='font-size:0.85em'>{traceback.format_exc()}</pre>"
+        msg = f"❌ Connection test failed: {error_detail}"
     
     return HTMLResponse(content=_render_ai_panel(msg))
 
